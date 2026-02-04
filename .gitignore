@@ -1,0 +1,8 @@
+# Compiled binaries
+bin/
+/lazyas
+dist/
+
+# Coverage
+coverage.out
+coverage.html

@@ -1,0 +1,305 @@
+package registry
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
+	"lazyas/internal/config"
+)
+
+// Registry handles index operations
+type Registry struct {
+	cfg   *config.Config
+	cache *CacheManager
+	index *Index
+}
+
+// NewRegistry creates a new registry
+func NewRegistry(cfg *config.Config) *Registry {
+	return &Registry{
+		cfg:   cfg,
+		cache: NewCacheManager(cfg),
+	}
+}
+
+// Fetch retrieves skills from all configured repositories
+func (r *Registry) Fetch(forceRefresh bool) error {
+	// Try cache first unless forced refresh
+	if !forceRefresh {
+		if err := r.cache.Load(); err == nil && r.cache.IsValid() {
+			r.index = r.cache.Get()
+			return nil
+		}
+	}
+
+	// No repos configured
+	if len(r.cfg.Repos) == 0 {
+		r.index = &Index{}
+		return fmt.Errorf("no repositories configured - add repos to ~/.config/lazyas/config.toml")
+	}
+
+	// Fetch from all configured repos
+	var allSkills []SkillEntry
+	var errors []string
+
+	for _, repo := range r.cfg.Repos {
+		skills, err := r.fetchRepo(repo.URL)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", repo.Name, err))
+			continue
+		}
+		// Tag skills with their source repo name
+		for i := range skills {
+			if skills[i].Source.RepoName == "" {
+				skills[i].Source.RepoName = repo.Name
+			}
+		}
+		allSkills = append(allSkills, skills...)
+	}
+
+	r.index = &Index{Skills: allSkills}
+
+	// Update cache
+	if err := r.cache.Set(r.index); err != nil {
+		// Non-fatal
+		fmt.Fprintf(os.Stderr, "warning: failed to cache index: %v\n", err)
+	}
+
+	if len(errors) > 0 && len(allSkills) == 0 {
+		return fmt.Errorf("failed to fetch from any repository:\n  %s", joinErrors(errors))
+	}
+
+	return nil
+}
+
+func (r *Registry) fetchRepo(repoURL string) ([]SkillEntry, error) {
+	// Clone repo to temp dir
+	tempDir, err := os.MkdirTemp("", "lazyas-index-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Shallow clone
+	cmd := exec.Command("git", "clone", "--depth", "1", repoURL, tempDir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git clone failed: %s", string(output))
+	}
+
+	// Try index.yaml first (index repo)
+	indexPath := filepath.Join(tempDir, "index.yaml")
+	if data, err := os.ReadFile(indexPath); err == nil {
+		var index Index
+		if err := yaml.Unmarshal(data, &index); err != nil {
+			return nil, fmt.Errorf("failed to parse index.yaml: %w", err)
+		}
+		return index.Skills, nil
+	}
+
+	// No index.yaml - scan for skills (skills repo)
+	return r.scanForSkills(tempDir, repoURL)
+}
+
+// scanForSkills discovers skills by finding SKILL.md files
+func (r *Registry) scanForSkills(repoDir, repoURL string) ([]SkillEntry, error) {
+	var skills []SkillEntry
+
+	// Common locations for skills
+	searchDirs := []string{
+		repoDir,                          // root
+		filepath.Join(repoDir, "skills"), // skills/
+		filepath.Join(repoDir, "external", "skills"), // external/skills/
+	}
+
+	for _, searchDir := range searchDirs {
+		entries, err := os.ReadDir(searchDir)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			// Skip hidden directories
+			if entry.Name()[0] == '.' {
+				continue
+			}
+
+			skillDir := filepath.Join(searchDir, entry.Name())
+			skillMdPath := filepath.Join(skillDir, "SKILL.md")
+
+			if _, err := os.Stat(skillMdPath); err == nil {
+				// Found a skill
+				skill := SkillEntry{
+					Name: entry.Name(),
+					Source: SkillSource{
+						Repo: repoURL,
+					},
+				}
+
+				// Determine path relative to repo root
+				relPath, _ := filepath.Rel(repoDir, skillDir)
+				if relPath != entry.Name() {
+					skill.Source.Path = relPath
+				}
+
+				// Try to extract description from SKILL.md
+				if content, err := os.ReadFile(skillMdPath); err == nil {
+					skill.Description = extractDescription(string(content))
+				}
+
+				skills = append(skills, skill)
+			}
+		}
+	}
+
+	if len(skills) == 0 {
+		return nil, fmt.Errorf("no index.yaml and no skills found (looking for directories with SKILL.md)")
+	}
+
+	return skills, nil
+}
+
+// extractDescription extracts a brief description from SKILL.md content
+func extractDescription(content string) string {
+	lines := splitLines(content)
+	inFrontmatter := false
+	frontmatterCount := 0
+
+	for _, line := range lines {
+		trimmed := trimSpace(line)
+
+		// Handle YAML frontmatter (between --- markers)
+		if trimmed == "---" {
+			frontmatterCount++
+			inFrontmatter = frontmatterCount == 1
+			if frontmatterCount == 2 {
+				inFrontmatter = false
+			}
+			continue
+		}
+
+		// Look for description field in frontmatter
+		if inFrontmatter {
+			if len(trimmed) > 12 && trimmed[:12] == "description:" {
+				desc := trimSpace(trimmed[12:])
+				// Remove quotes if present
+				if len(desc) >= 2 && (desc[0] == '"' || desc[0] == '\'') {
+					desc = desc[1 : len(desc)-1]
+				}
+				if len(desc) > 100 {
+					return desc[:97] + "..."
+				}
+				return desc
+			}
+			continue
+		}
+
+		if trimmed == "" {
+			continue
+		}
+
+		// Skip headings
+		if len(trimmed) > 0 && trimmed[0] == '#' {
+			continue
+		}
+
+		// Skip code blocks
+		if len(trimmed) >= 3 && trimmed[:3] == "```" {
+			continue
+		}
+
+		// Return first content line (truncated)
+		if len(trimmed) > 100 {
+			return trimmed[:97] + "..."
+		}
+		return trimmed
+	}
+	return ""
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
+}
+
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
+}
+
+func joinErrors(errors []string) string {
+	result := ""
+	for i, e := range errors {
+		if i > 0 {
+			result += "\n  "
+		}
+		result += e
+	}
+	return result
+}
+
+// GetIndex returns the current index
+func (r *Registry) GetIndex() *Index {
+	return r.index
+}
+
+// GetSkill finds a skill by name
+func (r *Registry) GetSkill(name string) *SkillEntry {
+	if r.index == nil {
+		return nil
+	}
+
+	for i := range r.index.Skills {
+		if r.index.Skills[i].Name == name {
+			return &r.index.Skills[i]
+		}
+	}
+	return nil
+}
+
+// SearchSkills searches for skills matching a query
+func (r *Registry) SearchSkills(query string) []SkillEntry {
+	if r.index == nil {
+		return nil
+	}
+
+	var results []SkillEntry
+	for _, skill := range r.index.Skills {
+		if skill.MatchesQuery(query) {
+			results = append(results, skill)
+		}
+	}
+	return results
+}
+
+// ListSkills returns all skills
+func (r *Registry) ListSkills() []SkillEntry {
+	if r.index == nil {
+		return nil
+	}
+	return r.index.Skills
+}
