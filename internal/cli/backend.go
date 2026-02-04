@@ -70,7 +70,7 @@ var backendRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Remove a custom backend",
 	Long: `Remove a custom backend from configuration.
-Built-in backends (claude, codex) cannot be removed.
+Built-in backends cannot be removed.
 
 Examples:
   lazyas backend remove myai`,

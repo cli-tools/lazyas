@@ -27,9 +27,3 @@ type ValidationError struct {
 func (e *ValidationError) Error() string {
 	return e.Message
 }
-
-// IsValidationError checks if an error is a validation error
-func IsValidationError(err error) bool {
-	_, ok := err.(*ValidationError)
-	return ok
-}

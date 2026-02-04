@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"lazyas/internal/config"
@@ -139,51 +138,26 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Check if it's a sparse checkout (no .git directory means it was sparse)
-		gitDir := skillDir + "/.git"
-		if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-			// Re-install for sparse checkouts
-			if skill == nil {
-				fmt.Printf("  Warning: %s not found in registry, skipping\n", name)
-				failed++
-				continue
-			}
+		result, err := git.Update(skillDir, targetTag)
+		if err != nil {
+			fmt.Printf("  Failed: %v\n", err)
+			failed++
+			continue
+		}
 
-			// Remove and re-clone
-			os.RemoveAll(skillDir)
-			result, err := git.Clone(git.CloneOptions{
-				Repo:      skill.Source.Repo,
-				Path:      skill.Source.Path,
-				Tag:       targetTag,
-				TargetDir: skillDir,
-			})
-			if err != nil {
-				fmt.Printf("  Failed: %v\n", err)
-				failed++
-				continue
+		if result.Commit != info.Commit {
+			sourceRepo := info.SourceRepo
+			sourcePath := info.SourcePath
+			if skill != nil {
+				sourceRepo = skill.Source.Repo
+				sourcePath = skill.Source.Path
 			}
-
-			// Update manifest
-			mfst.AddSkill(name, targetTag, result.Commit, skill.Source.Repo, skill.Source.Path)
+			mfst.AddSkill(name, targetTag, result.Commit, sourceRepo, sourcePath)
 			fmt.Printf("  Updated to %s\n", truncateString(result.Commit, 7))
 			updated++
 		} else {
-			// Regular git update
-			result, err := git.Update(skillDir, targetTag)
-			if err != nil {
-				fmt.Printf("  Failed: %v\n", err)
-				failed++
-				continue
-			}
-
-			if result.Commit != info.Commit {
-				mfst.AddSkill(name, targetTag, result.Commit, info.SourceRepo, info.SourcePath)
-				fmt.Printf("  Updated to %s\n", truncateString(result.Commit, 7))
-				updated++
-			} else {
-				fmt.Printf("  Already up to date\n")
-				skipped++
-			}
+			fmt.Printf("  Already up to date\n")
+			skipped++
 		}
 	}
 

@@ -33,37 +33,66 @@ type Backend struct {
 var KnownBackends = []Backend{
 	{Name: "claude", Path: "~/.claude/skills", Description: "Claude Code"},
 	{Name: "codex", Path: "~/.codex/skills", Description: "OpenAI Codex"},
+	{Name: "gemini", Path: "~/.gemini/skills", Description: "Gemini CLI"},
+	{Name: "cursor", Path: "~/.cursor/skills", Description: "Cursor"},
+	{Name: "copilot", Path: "~/.copilot/skills", Description: "GitHub Copilot"},
+	{Name: "amp", Path: "$XDG_CONFIG_HOME/agents/skills", Description: "Amp"},
+	{Name: "goose", Path: "$XDG_CONFIG_HOME/goose/skills", Description: "Goose"},
+	{Name: "opencode", Path: "$XDG_CONFIG_HOME/opencode/skills", Description: "OpenCode"},
+	{Name: "vibe", Path: "~/.vibe/skills", Description: "Mistral Vibe"},
 }
 
 // ConfigFile represents the TOML config file structure
 type ConfigFile struct {
-	Repos    []Repo    `toml:"repos"`
-	CacheTTL int       `toml:"cache_ttl_hours,omitempty"`
-	Backends []Backend `toml:"backends,omitempty"`
+	Repos             []Repo    `toml:"repos"`
+	CacheTTL          int       `toml:"cache_ttl_hours,omitempty"`
+	Backends          []Backend `toml:"backends,omitempty"`
+	DismissedBackends []string  `toml:"dismissed_backends,omitempty"`
 }
 
 // Config holds the runtime configuration
 type Config struct {
-	ConfigDir    string
-	ConfigPath   string
-	ManifestPath string
-	CachePath    string
-	SkillsDir    string // Always ~/.lazyas/skills/ - the central skills directory
-	Repos        []Repo
-	CacheTTL     int
-	Backends     []Backend // Configured backends (symlink targets)
+	ConfigDir         string
+	ConfigPath        string
+	ManifestPath      string
+	CachePath         string
+	SkillsDir         string // Always ~/.lazyas/skills/ - the central skills directory
+	Repos             []Repo
+	CacheTTL          int
+	Backends          []Backend // Configured backends (symlink targets)
+	DismissedBackends []string  // Backend names dismissed from auto-show
 }
 
-// ExpandPath expands ~ to home directory in a path
-func ExpandPath(path string) (string, error) {
-	if !strings.HasPrefix(path, "~") {
-		return path, nil
+// xdgConfigHome returns $XDG_CONFIG_HOME, falling back to ~/.config per spec.
+func xdgConfigHome() (string, error) {
+	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
+		return v, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, path[1:]), nil
+	return filepath.Join(home, ".config"), nil
+}
+
+// ExpandPath expands ~ and $XDG_CONFIG_HOME in a path
+func ExpandPath(path string) (string, error) {
+	const xdgPrefix = "$XDG_CONFIG_HOME"
+	if strings.HasPrefix(path, xdgPrefix) {
+		xdg, err := xdgConfigHome()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(xdg, path[len(xdgPrefix):]), nil
+	}
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, path[1:]), nil
+	}
+	return path, nil
 }
 
 // DefaultConfig returns the default configuration
@@ -97,11 +126,6 @@ func DefaultConfig() (*Config, error) {
 		return nil, err
 	}
 
-	// Migrate from old config location if needed
-	if err := cfg.migrateOldConfig(); err != nil {
-		// Non-fatal, just log and continue
-	}
-
 	return cfg, nil
 }
 
@@ -122,6 +146,8 @@ func (c *Config) Load() error {
 	if len(cf.Backends) > 0 {
 		c.Backends = mergeBackends(KnownBackends, cf.Backends)
 	}
+
+	c.DismissedBackends = cf.DismissedBackends
 
 	return nil
 }
@@ -154,8 +180,9 @@ func (c *Config) Save() error {
 	}
 
 	cf := ConfigFile{
-		Repos:    c.Repos,
-		CacheTTL: c.CacheTTL,
+		Repos:             c.Repos,
+		CacheTTL:          c.CacheTTL,
+		DismissedBackends: c.DismissedBackends,
 	}
 
 	// Only save backends that differ from known backends or are custom
@@ -227,15 +254,6 @@ func (c *Config) RemoveRepo(name string) error {
 	return nil
 }
 
-// GetRepoURLs returns all configured repository URLs
-func (c *Config) GetRepoURLs() []string {
-	urls := make([]string, len(c.Repos))
-	for i, r := range c.Repos {
-		urls[i] = r.URL
-	}
-	return urls
-}
-
 // GetBackend returns a backend by name
 func (c *Config) GetBackend(name string) *Backend {
 	for i := range c.Backends {
@@ -268,6 +286,26 @@ func (c *Config) AddBackend(name, path, description string) error {
 	return c.Save()
 }
 
+// DismissBackend adds a backend name to the dismissed list
+func (c *Config) DismissBackend(name string) {
+	for _, d := range c.DismissedBackends {
+		if d == name {
+			return
+		}
+	}
+	c.DismissedBackends = append(c.DismissedBackends, name)
+}
+
+// UndismissBackend removes a backend name from the dismissed list
+func (c *Config) UndismissBackend(name string) {
+	for i, d := range c.DismissedBackends {
+		if d == name {
+			c.DismissedBackends = append(c.DismissedBackends[:i], c.DismissedBackends[i+1:]...)
+			return
+		}
+	}
+}
+
 // RemoveBackend removes a backend from the configuration
 func (c *Config) RemoveBackend(name string) error {
 	// Check if it's a known backend - can't remove those
@@ -284,60 +322,4 @@ func (c *Config) RemoveBackend(name string) error {
 		}
 	}
 	return nil
-}
-
-// migrateOldConfig migrates from old ~/.config/lazyas/ location to ~/.lazyas/
-func (c *Config) migrateOldConfig() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	oldConfigDir := filepath.Join(home, ".config", "lazyas")
-	oldConfigPath := filepath.Join(oldConfigDir, ConfigFileName)
-	oldManifestPath := filepath.Join(oldConfigDir, ManifestFileName)
-	oldCachePath := filepath.Join(oldConfigDir, CacheFileName)
-
-	// Check if old config exists but new doesn't
-	if _, err := os.Stat(oldConfigPath); os.IsNotExist(err) {
-		return nil // Nothing to migrate
-	}
-
-	if _, err := os.Stat(c.ConfigPath); err == nil {
-		return nil // New config already exists, don't overwrite
-	}
-
-	// Ensure new directory exists
-	if err := os.MkdirAll(c.ConfigDir, 0755); err != nil {
-		return err
-	}
-
-	// Move files if they exist
-	if _, err := os.Stat(oldConfigPath); err == nil {
-		if err := os.Rename(oldConfigPath, c.ConfigPath); err != nil {
-			// If rename fails (cross-device), try copy+delete
-			if data, err := os.ReadFile(oldConfigPath); err == nil {
-				os.WriteFile(c.ConfigPath, data, 0644)
-			}
-		}
-	}
-
-	if _, err := os.Stat(oldManifestPath); err == nil {
-		if err := os.Rename(oldManifestPath, c.ManifestPath); err != nil {
-			if data, err := os.ReadFile(oldManifestPath); err == nil {
-				os.WriteFile(c.ManifestPath, data, 0644)
-			}
-		}
-	}
-
-	if _, err := os.Stat(oldCachePath); err == nil {
-		if err := os.Rename(oldCachePath, c.CachePath); err != nil {
-			if data, err := os.ReadFile(oldCachePath); err == nil {
-				os.WriteFile(c.CachePath, data, 0644)
-			}
-		}
-	}
-
-	// Reload config after migration
-	return c.Load()
 }

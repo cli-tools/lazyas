@@ -25,6 +25,7 @@ type ListItem struct {
 	Type       ListItemType
 	Skill      *registry.SkillEntry
 	HeaderName string
+	RepoURL    string // Original repo URL (for headers)
 	Collapsed  bool
 	SkillCount int
 }
@@ -32,6 +33,7 @@ type ListItem struct {
 // SkillGroup represents a group of skills
 type SkillGroup struct {
 	Name      string
+	RepoURL   string // Original repo URL (empty for "Installed" group)
 	Skills    []registry.SkillEntry
 	Collapsed bool
 }
@@ -43,6 +45,7 @@ type SkillsPanel struct {
 	flatItems   []ListItem
 	installed   map[string]bool
 	modified    map[string]bool
+	localOnly   map[string]bool // On disk but not tracked in manifest
 	cursor      int
 	height      int
 	width       int
@@ -63,6 +66,7 @@ type SkillsPanel struct {
 type SkillsPanelStyles struct {
 	Title                lipgloss.Style
 	StatusInstalled      lipgloss.Style
+	StatusLocal          lipgloss.Style
 	StatusAvailable      lipgloss.Style
 	StatusModified       lipgloss.Style
 	SelectedItem         lipgloss.Style
@@ -81,6 +85,9 @@ func DefaultSkillsPanelStyles() SkillsPanelStyles {
 			Foreground(lipgloss.Color("#7C3AED")),
 		StatusInstalled: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#10B981")).
+			SetString("●"),
+		StatusLocal: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#38BDF8")).
 			SetString("●"),
 		StatusAvailable: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#6B7280")).
@@ -139,11 +146,19 @@ func (p *SkillsPanel) buildGroups() {
 	for _, skill := range p.skills {
 		if p.installed[skill.Name] {
 			installedSkills = append(installedSkills, skill)
-		} else {
-			repo := skill.Source.Repo
+		}
+		// Add to repo group (so installed skills also appear under their repo)
+		// Skip skills whose "repo" is a local filesystem path, not a real URL
+		repo := skill.Source.Repo
+		if repo != "" && !strings.HasPrefix(repo, "/") && !strings.HasPrefix(repo, "~") {
 			repoGroups[repo] = append(repoGroups[repo], skill)
 		}
 	}
+
+	// Sort installed skills alphabetically for stable order
+	sort.Slice(installedSkills, func(i, j int) bool {
+		return installedSkills[i].Name < installedSkills[j].Name
+	})
 
 	// Add Installed group first (if any)
 	if len(installedSkills) > 0 {
@@ -161,12 +176,17 @@ func (p *SkillsPanel) buildGroups() {
 	}
 	sort.Strings(repos)
 
-	// Add repo groups
+	// Add repo groups with skills sorted alphabetically
 	for _, repo := range repos {
+		skills := repoGroups[repo]
+		sort.Slice(skills, func(i, j int) bool {
+			return skills[i].Name < skills[j].Name
+		})
 		displayName := formatRepoName(repo)
 		p.groups = append(p.groups, SkillGroup{
 			Name:      displayName,
-			Skills:    repoGroups[repo],
+			RepoURL:   repo,
+			Skills:    skills,
 			Collapsed: p.collapseMap[displayName],
 		})
 	}
@@ -191,6 +211,7 @@ func (p *SkillsPanel) rebuildFlatList() {
 		p.flatItems = append(p.flatItems, ListItem{
 			Type:       ItemTypeHeader,
 			HeaderName: group.Name,
+			RepoURL:    group.RepoURL,
 			Collapsed:  group.Collapsed,
 			SkillCount: len(group.Skills),
 		})
@@ -256,6 +277,11 @@ func (p *SkillsPanel) SetModified(modified map[string]bool) {
 	p.modified = modified
 }
 
+// SetLocalOnly updates the local-only map (installed on disk but not tracked in manifest)
+func (p *SkillsPanel) SetLocalOnly(localOnly map[string]bool) {
+	p.localOnly = localOnly
+}
+
 // Selected returns the currently selected skill
 func (p *SkillsPanel) Selected() *registry.SkillEntry {
 	if len(p.flatItems) == 0 || p.cursor >= len(p.flatItems) {
@@ -264,6 +290,18 @@ func (p *SkillsPanel) Selected() *registry.SkillEntry {
 	item := p.flatItems[p.cursor]
 	if item.Type == ItemTypeSkill {
 		return item.Skill
+	}
+	return nil
+}
+
+// SelectedHeader returns the header item if the cursor is on a group header, nil otherwise
+func (p *SkillsPanel) SelectedHeader() *ListItem {
+	if len(p.flatItems) == 0 || p.cursor >= len(p.flatItems) {
+		return nil
+	}
+	item := p.flatItems[p.cursor]
+	if item.Type == ItemTypeHeader {
+		return &item
 	}
 	return nil
 }
@@ -374,7 +412,7 @@ func (p *SkillsPanel) moveDown() {
 }
 
 func (p *SkillsPanel) adjustOffset() {
-	visibleHeight := p.height - 4 // Account for header and padding
+	visibleHeight := p.height
 	if p.cursor < p.offset {
 		p.offset = p.cursor
 	}
@@ -449,7 +487,7 @@ func (p *SkillsPanel) View() string {
 		return b.String()
 	}
 
-	visibleHeight := p.height - 4
+	visibleHeight := p.height
 	if p.searching || p.query != "" {
 		visibleHeight--
 	}
@@ -493,6 +531,9 @@ func (p *SkillsPanel) renderHeader(item ListItem, selected bool) string {
 	}
 
 	if selected && p.focused {
+		if len(headerText) < p.width {
+			headerText = headerText + strings.Repeat(" ", p.width-len(headerText))
+		}
 		return p.styles.SelectedItem.Render(headerText)
 	}
 	if item.HeaderName == "Installed" {
@@ -502,17 +543,6 @@ func (p *SkillsPanel) renderHeader(item ListItem, selected bool) string {
 }
 
 func (p *SkillsPanel) renderSkill(skill *registry.SkillEntry, selected bool) string {
-	var status string
-	if p.installed[skill.Name] {
-		if p.modified[skill.Name] {
-			status = p.styles.StatusModified.String()
-		} else {
-			status = p.styles.StatusInstalled.String()
-		}
-	} else {
-		status = p.styles.StatusAvailable.String()
-	}
-
 	name := skill.Name
 	if p.modified[skill.Name] {
 		name = name + "*"
@@ -524,10 +554,41 @@ func (p *SkillsPanel) renderSkill(skill *registry.SkillEntry, selected bool) str
 		name = name[:maxWidth-3] + "..."
 	}
 
-	line := fmt.Sprintf("  %s %s", status, name)
-
 	if selected && p.focused {
+		// Use plain status chars to avoid ANSI conflicts with highlight
+		var statusChar string
+		if p.installed[skill.Name] {
+			if p.modified[skill.Name] {
+				statusChar = "◉"
+			} else if p.localOnly[skill.Name] {
+				statusChar = "●"
+			} else {
+				statusChar = "●"
+			}
+		} else {
+			statusChar = "○"
+		}
+		line := fmt.Sprintf("  %s %s", statusChar, name)
+		// Pad to full width for full-line highlight
+		if len(line) < p.width {
+			line = line + strings.Repeat(" ", p.width-len(line))
+		}
 		return p.styles.SelectedItem.Render(line)
 	}
+
+	var status string
+	if p.installed[skill.Name] {
+		if p.modified[skill.Name] {
+			status = p.styles.StatusModified.String()
+		} else if p.localOnly[skill.Name] {
+			status = p.styles.StatusLocal.String()
+		} else {
+			status = p.styles.StatusInstalled.String()
+		}
+	} else {
+		status = p.styles.StatusAvailable.String()
+	}
+
+	line := fmt.Sprintf("  %s %s", status, name)
 	return p.styles.NormalItem.Render(line)
 }

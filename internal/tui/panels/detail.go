@@ -242,6 +242,7 @@ func (p *DetailPanel) renderInfo() string {
 	b.WriteString("\n\n")
 
 	// Status badge
+	isUntracked := p.localInfo != nil && p.installed == nil
 	if p.localInfo != nil {
 		if p.localInfo.IsModified {
 			b.WriteString(p.styles.BadgeModified.Render("● MODIFIED"))
@@ -250,43 +251,58 @@ func (p *DetailPanel) renderInfo() string {
 		}
 		if p.installed != nil {
 			b.WriteString(p.styles.Muted.Render(" (commit: " + truncate(p.installed.Commit, 7) + ")"))
+		} else {
+			b.WriteString(p.styles.Muted.Render(" (untracked)"))
 		}
 	} else {
 		b.WriteString(p.styles.Muted.Render("○ Not installed"))
 	}
 	b.WriteString("\n\n")
 
-	// Author
-	if p.skill.Author != "" {
-		b.WriteString(p.styles.Label.Render("Author"))
-		b.WriteString(p.styles.Value.Render(p.skill.Author))
+	if isUntracked {
+		// Untracked skill: show local path, not registry source info
+		b.WriteString(p.styles.Label.Render("Location"))
+		loc := p.localInfo.Path
+		if len(loc) > p.width-14 {
+			loc = loc[:p.width-17] + "..."
+		}
+		b.WriteString(p.styles.Value.Render(loc))
+		b.WriteString("\n")
+		b.WriteString(p.styles.Muted.Render("Not managed by lazyas. Use 'i' to install from registry."))
+		b.WriteString("\n")
+	} else {
+		// Author
+		if p.skill.Author != "" {
+			b.WriteString(p.styles.Label.Render("Author"))
+			b.WriteString(p.styles.Value.Render(p.skill.Author))
+			b.WriteString("\n")
+		}
+
+		// Repository
+		b.WriteString(p.styles.Label.Render("Repository"))
+		repo := p.skill.Source.Repo
+		if len(repo) > p.width-14 {
+			repo = repo[:p.width-17] + "..."
+		}
+		b.WriteString(p.styles.Value.Render(repo))
+		b.WriteString("\n")
+
+		// Path (if present)
+		if p.skill.Source.Path != "" {
+			b.WriteString(p.styles.Label.Render("Path"))
+			b.WriteString(p.styles.Value.Render(p.skill.Source.Path))
+			b.WriteString("\n")
+		}
+
+		// Version
+		b.WriteString(p.styles.Label.Render("Version"))
+		version := p.skill.Source.Tag
+		if version == "" {
+			version = "latest"
+		}
+		b.WriteString(p.styles.Value.Render(version))
 		b.WriteString("\n")
 	}
-
-	// Repository
-	b.WriteString(p.styles.Label.Render("Repository"))
-	repo := p.skill.Source.Repo
-	if len(repo) > p.width-14 {
-		repo = repo[:p.width-17] + "..."
-	}
-	b.WriteString(p.styles.Value.Render(repo))
-	b.WriteString("\n")
-
-	// Path (if present)
-	if p.skill.Source.Path != "" {
-		b.WriteString(p.styles.Label.Render("Path"))
-		b.WriteString(p.styles.Value.Render(p.skill.Source.Path))
-		b.WriteString("\n")
-	}
-
-	// Version
-	b.WriteString(p.styles.Label.Render("Version"))
-	version := p.skill.Source.Tag
-	if version == "" {
-		version = "latest"
-	}
-	b.WriteString(p.styles.Value.Render(version))
-	b.WriteString("\n")
 
 	// Tags
 	if len(p.skill.Tags) > 0 {

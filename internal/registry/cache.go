@@ -91,9 +91,3 @@ func (c *CacheManager) Set(index *Index) error {
 	}
 	return c.Save()
 }
-
-// Clear removes the cache
-func (c *CacheManager) Clear() error {
-	c.cache = nil
-	return os.Remove(c.cfg.CachePath)
-}

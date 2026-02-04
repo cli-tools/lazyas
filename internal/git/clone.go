@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,9 +44,10 @@ func cloneFullRepo(opts CloneOptions) (*CloneResult, error) {
 	args = append(args, opts.Repo, opts.TargetDir)
 
 	cmd := exec.Command("git", args...)
-	cmd.Stderr = os.Stderr
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git clone failed: %w", err)
+		return nil, fmt.Errorf("git clone failed: %w\n%s", err, stderr.String())
 	}
 
 	commit, err := getHeadCommit(opts.TargetDir)
@@ -120,9 +122,6 @@ func cloneSparse(opts CloneOptions) (*CloneResult, error) {
 		return nil, fmt.Errorf("git checkout failed: %w", err)
 	}
 
-	// Store the skill path in git config for later reference
-	runGit(opts.TargetDir, "config", "lazyas.path", opts.Path)
-
 	commit, err := getHeadCommit(opts.TargetDir)
 	if err != nil {
 		os.RemoveAll(opts.TargetDir)
@@ -136,6 +135,61 @@ func cloneSparse(opts CloneOptions) (*CloneResult, error) {
 		return nil, fmt.Errorf("skill path %s not found in repository", opts.Path)
 	}
 
+	// Relocate files from the nested subdirectory to the target root so that
+	// SKILL.md (and everything else) lives at targetDir/ instead of
+	// targetDir/<opts.Path>/.
+	entries, err := os.ReadDir(skillPath)
+	if err != nil {
+		os.RemoveAll(opts.TargetDir)
+		return nil, fmt.Errorf("failed to read skill path: %w", err)
+	}
+	for _, e := range entries {
+		src := filepath.Join(skillPath, e.Name())
+		dst := filepath.Join(opts.TargetDir, e.Name())
+		if err := os.Rename(src, dst); err != nil {
+			os.RemoveAll(opts.TargetDir)
+			return nil, fmt.Errorf("failed to relocate %s: %w", e.Name(), err)
+		}
+	}
+
+	// Remove the now-empty intermediate directory tree.
+	// topLevel is the first path component (e.g. "skills" from "skills/foo").
+	topLevel := strings.SplitN(opts.Path, "/", 2)[0]
+	os.RemoveAll(filepath.Join(opts.TargetDir, topLevel))
+
+	// Remove the old .git whose index tracks the original nested layout.
+	os.RemoveAll(filepath.Join(opts.TargetDir, ".git"))
+
+	// Re-initialise a fresh repo so modification tracking works against the
+	// relocated file layout.
+	if err := runGit(opts.TargetDir, "init"); err != nil {
+		os.RemoveAll(opts.TargetDir)
+		return nil, fmt.Errorf("git re-init failed: %w", err)
+	}
+	if err := runGit(opts.TargetDir, "remote", "add", "origin", opts.Repo); err != nil {
+		os.RemoveAll(opts.TargetDir)
+		return nil, fmt.Errorf("git remote add failed after relocate: %w", err)
+	}
+	// Mark this as a relocated sparse skill so Update() knows how to handle it.
+	runGit(opts.TargetDir, "config", "lazyas.path", opts.Path)
+
+	// Baseline commit for modification tracking.
+	if err := runGit(opts.TargetDir, "add", "-A"); err != nil {
+		os.RemoveAll(opts.TargetDir)
+		return nil, fmt.Errorf("git add failed: %w", err)
+	}
+	if err := runGit(opts.TargetDir, "commit", "-m", "lazyas install"); err != nil {
+		os.RemoveAll(opts.TargetDir)
+		return nil, fmt.Errorf("git commit failed: %w", err)
+	}
+
+	// Re-read commit hash from the fresh repo.
+	commit, err = getHeadCommit(opts.TargetDir)
+	if err != nil {
+		os.RemoveAll(opts.TargetDir)
+		return nil, err
+	}
+
 	return &CloneResult{
 		Commit: commit,
 		Path:   opts.TargetDir,
@@ -145,8 +199,26 @@ func cloneSparse(opts CloneOptions) (*CloneResult, error) {
 func runGit(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		errMsg := stderr.String()
+		if errMsg != "" {
+			return fmt.Errorf("%w\n%s", err, errMsg)
+		}
+		return err
+	}
+	return nil
+}
+
+func getGitConfig(dir, key string) string {
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func getHeadCommit(dir string) (string, error) {
@@ -157,32 +229,6 @@ func getHeadCommit(dir string) (string, error) {
 		return "", fmt.Errorf("failed to get commit: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-
-		dstPath := filepath.Join(dst, relPath)
-
-		if info.IsDir() {
-			return os.MkdirAll(dstPath, info.Mode())
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return os.WriteFile(dstPath, data, info.Mode())
-	})
 }
 
 // IsGitRepo checks if the path is a git repository
@@ -260,6 +306,22 @@ func Update(skillPath, tag string) (*CloneResult, error) {
 	}
 	if modified {
 		return nil, fmt.Errorf("skill has local modifications; commit or discard changes before updating")
+	}
+
+	// If this is a relocated sparse skill, re-clone from scratch so we
+	// don't restore the original nested layout via reset --hard.
+	if sparsePath := getGitConfig(skillPath, "lazyas.path"); sparsePath != "" {
+		repo := getGitConfig(skillPath, "remote.origin.url")
+		if repo == "" {
+			return nil, fmt.Errorf("relocated sparse skill has no remote.origin.url")
+		}
+		os.RemoveAll(skillPath)
+		return Clone(CloneOptions{
+			Repo:      repo,
+			Path:      sparsePath,
+			Tag:       tag,
+			TargetDir: skillPath,
+		})
 	}
 
 	// For shallow clones, we need to fetch and reset

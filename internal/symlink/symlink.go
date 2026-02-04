@@ -13,6 +13,7 @@ import (
 type LinkStatus struct {
 	Backend     config.Backend
 	Linked      bool   // Is the symlink properly configured?
+	Available   bool   // Is the backend installed on this system?
 	Exists      bool   // Does the target path exist?
 	HasFiles    bool   // Does the target have existing files?
 	IsSymlink   bool   // Is the target already a symlink?
@@ -42,6 +43,13 @@ func checkSingleBackend(backend config.Backend, centralDir string) LinkStatus {
 	if err != nil {
 		status.Error = fmt.Errorf("failed to expand path: %w", err)
 		return status
+	}
+
+	// Check if the backend's parent directory exists (e.g. ~/.gemini/ for ~/.gemini/skills/)
+	// to determine whether the backend tool is installed on this system
+	parentDir := filepath.Dir(backendPath)
+	if info, err := os.Stat(parentDir); err == nil && info.IsDir() {
+		status.Available = true
 	}
 
 	// Check if path exists
@@ -284,4 +292,18 @@ func GetUnlinkedBackends(statuses []LinkStatus) []LinkStatus {
 		}
 	}
 	return unlinked
+}
+
+// HasNewBackends returns true if any backend is available and unlinked but not dismissed
+func HasNewBackends(statuses []LinkStatus, dismissed []string) bool {
+	dismissedSet := make(map[string]bool, len(dismissed))
+	for _, name := range dismissed {
+		dismissedSet[name] = true
+	}
+	for _, s := range statuses {
+		if s.Available && !s.Linked && s.Error == nil && !dismissedSet[s.Backend.Name] {
+			return true
+		}
+	}
+	return false
 }

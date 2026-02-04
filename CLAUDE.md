@@ -16,12 +16,22 @@ Think of it like `apt`, `brew`, or `npm` - a package manager for Agent Skills.
 
 ## Multi-Backend Support
 
-**lazyas aims to support multiple AI agent backends, not just Claude.**
+**lazyas supports multiple AI agent backends through a symlinked central directory.**
 
-The "Lazy Agent Skills" name reflects this broader scope. While the initial implementation targets Claude Code's skills directory (`~/.claude/skills/`), the architecture is designed to support other backends as they adopt the Agent Skills format.
+All skills live in one place (`~/.lazyas/skills/`), with symlinks from each backend's expected location pointing back to it. This means every linked backend shares the same skills without duplication.
 
-Current backend: Claude Code
-Future backends: TBD (as Agent Skills adoption grows)
+Built-in backends:
+- Claude Code (`~/.claude/skills/`)
+- OpenAI Codex (`~/.codex/skills/`)
+- Gemini CLI (`~/.gemini/skills/`)
+- Cursor (`~/.cursor/skills/`)
+- GitHub Copilot (`~/.copilot/skills/`)
+- Amp (`$XDG_CONFIG_HOME/agents/skills/`)
+- Goose (`$XDG_CONFIG_HOME/goose/skills/`)
+- OpenCode (`$XDG_CONFIG_HOME/opencode/skills/`)
+- Mistral Vibe (`~/.vibe/skills/`)
+
+Custom backends can be added via `lazyas backend add <name> <path>`.
 
 ## Scope: Agent Skills ONLY
 
@@ -53,7 +63,34 @@ If someone asks about creating skills, point them to skillcreator.ai instead.
 
 ## Architecture Notes
 
-- Panel-based TUI (lazygit-style) with left/right split
+- Central directory: `~/.lazyas/` holds config, manifest, cache, and skills
+- Symlinks from backend paths (e.g., `~/.claude/skills/`) to `~/.lazyas/skills/`
+- Config: `~/.lazyas/config.toml` (TOML, parsed by BurntSushi/toml)
+- Manifest: `~/.lazyas/manifest.yaml` (YAML, tracks installed skills)
 - Registry is a git repo containing `index.yaml`
 - Skills are cloned via git sparse-checkout when possible
-- Local state stored in `.lazyas/` within the skills directory
+- Panel-based TUI (lazygit-style) with left/right split using Bubble Tea
+- CLI built with Cobra
+
+## Build
+
+```
+export GOROOT=/opt/go
+make lint    # gofmt -s check + go vet (CI gate)
+make test    # all unit tests (CI gate)
+make build   # dev binary to bin/lazyas
+make release # multi-arch release (requires tagged HEAD)
+```
+
+## Key Directories
+
+```
+cmd/lazyas/          Entry point, version injection
+internal/cli/        Cobra commands (root, install, remove, update, sync, backend, ...)
+internal/config/     Config struct, Backend struct, ExpandPath(), KnownBackends
+internal/symlink/    Symlink lifecycle (check, create, remove, migrate)
+internal/tui/        Bubble Tea app, panels (skills, detail), layout
+internal/manifest/   Installed skills tracking
+internal/registry/   Registry fetching, caching, index parsing
+internal/git/        Clone and sparse-checkout operations
+```

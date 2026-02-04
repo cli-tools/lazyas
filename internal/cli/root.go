@@ -50,9 +50,14 @@ func checkBackendLinks() {
 	}
 
 	statuses := symlink.CheckBackendLinks(cfg.Backends, cfg.SkillsDir)
-	unlinked := symlink.GetUnlinkedBackends(statuses)
-	if len(unlinked) > 0 {
-		fmt.Printf("Hint: %d backend(s) not linked. Run 'lazyas backend link' to connect them.\n\n", len(unlinked))
+	var availableUnlinked int
+	for _, s := range statuses {
+		if s.Available && !s.Linked && s.Error == nil {
+			availableUnlinked++
+		}
+	}
+	if availableUnlinked > 0 {
+		fmt.Printf("Hint: %d backend(s) not linked. Run 'lazyas backend link' to connect them.\n\n", availableUnlinked)
 	}
 }
 

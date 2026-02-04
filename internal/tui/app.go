@@ -29,6 +29,7 @@ const (
 	ModeAddRepo
 	ModeBackendSetup
 	ModeUpdateResult
+	ModeError
 )
 
 // ConfirmAction represents the action to confirm
@@ -37,6 +38,8 @@ type ConfirmAction int
 const (
 	ConfirmInstall ConfirmAction = iota
 	ConfirmRemove
+	ConfirmRemoveRepo
+	ConfirmOverwrite
 )
 
 // App is the main TUI application model
@@ -56,7 +59,8 @@ type App struct {
 	mode          Mode
 	confirmAction ConfirmAction
 	confirmSkill  *registry.SkillEntry
-	confirmSel    int // 0 = yes, 1 = no
+	confirmRepo   string // Repo name for removal confirmation
+	confirmSel    int    // 0 = yes, 1 = no
 
 	// Loading
 	loadingMsg string
@@ -74,6 +78,10 @@ type App struct {
 
 	// Update results
 	updateResult *updateDoneMsg
+
+	// Error modal
+	errorTitle  string
+	errorDetail string
 
 	// Backend status for header
 	linkedBackends int
@@ -181,17 +189,19 @@ func (a *App) Init() tea.Cmd {
 
 // Messages
 type (
-	indexFetchedMsg struct{}
-	indexErrorMsg   struct{ err error }
-	installDoneMsg  struct{ skill string }
-	installErrMsg   struct{ err error }
-	removeDoneMsg   struct{ skill string }
-	removeErrMsg    struct{ err error }
-	repoAddedMsg    struct{ name string }
-	repoAddErrMsg   struct{ err error }
-	syncDoneMsg     struct{ skillCount int }
-	syncErrMsg      struct{ err error }
-	updateDoneMsg   struct {
+	indexFetchedMsg  struct{}
+	indexErrorMsg    struct{ err error }
+	installDoneMsg   struct{ skill string }
+	installErrMsg    struct{ err error }
+	removeDoneMsg    struct{ skill string }
+	removeErrMsg     struct{ err error }
+	repoAddedMsg     struct{ name string }
+	repoAddErrMsg    struct{ err error }
+	repoRemovedMsg   struct{ name string }
+	repoRemoveErrMsg struct{ err error }
+	syncDoneMsg      struct{ skillCount int }
+	syncErrMsg       struct{ err error }
+	updateDoneMsg    struct {
 		updated int
 		skipped int
 		failed  int
@@ -225,10 +235,15 @@ func (a *App) initPanels() {
 	localSkills := a.manifest.ScanLocalSkills()
 	installed := make(map[string]bool)
 	modified := make(map[string]bool)
+	localOnly := make(map[string]bool)
+	manifestInstalled := a.manifest.ListInstalled()
 	for name, local := range localSkills {
 		installed[name] = true
 		if local.IsModified {
 			modified[name] = true
+		}
+		if _, tracked := manifestInstalled[name]; !tracked {
+			localOnly[name] = true
 		}
 	}
 
@@ -237,10 +252,13 @@ func (a *App) initPanels() {
 
 	// Create panels
 	a.skills = panels.NewSkillsPanel(skills, installed, modified)
+	a.skills.SetLocalOnly(localOnly)
 	a.skills.SetFocused(true)
+	a.skills.SetSize(a.layout.LeftContentWidth(), a.layout.ContentHeight())
 
 	a.detail = panels.NewDetailPanel()
 	a.detail.SetFocused(false)
+	a.detail.SetSize(a.layout.RightContentWidth(), a.layout.ContentHeight())
 
 	// Update detail panel with selected skill
 	a.updateDetailPanel()
@@ -298,9 +316,12 @@ func (a *App) updateDetailPanel() {
 // checkBackendStatus updates the backend status for the header display
 func (a *App) checkBackendStatus() {
 	statuses := symlink.CheckBackendLinks(a.cfg.Backends, a.cfg.SkillsDir)
-	a.totalBackends = len(statuses)
+	a.totalBackends = 0
 	a.linkedBackends = 0
 	for _, s := range statuses {
+		if s.Linked || s.Available {
+			a.totalBackends++
+		}
 		if s.Linked {
 			a.linkedBackends++
 		}
@@ -340,13 +361,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateBackendSetup(msg)
 		case ModeUpdateResult:
 			return a.updateUpdateResult(msg)
+		case ModeError:
+			return a.updateError(msg)
 		}
 
 	case indexFetchedMsg:
 		a.initPanels()
 		a.checkBackendStatus()
-		// Show backend setup modal if there are unlinked backends
-		if symlink.HasUnlinkedBackends(a.backendStatuses) {
+		// Show backend setup modal if there are new available backends
+		if symlink.HasNewBackends(a.backendStatuses, a.cfg.DismissedBackends) {
 			a.mode = ModeBackendSetup
 			a.initBackendSetup()
 		} else {
@@ -369,8 +392,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case installErrMsg:
-		a.message = a.styles.Error.Render(fmt.Sprintf("Install failed: %v", msg.err))
-		a.mode = ModeNormal
+		a.errorTitle = "Install Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
 		return a, nil
 
 	case removeDoneMsg:
@@ -380,8 +404,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case removeErrMsg:
-		a.message = a.styles.Error.Render(fmt.Sprintf("Remove failed: %v", msg.err))
-		a.mode = ModeNormal
+		a.errorTitle = "Remove Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
 		return a, nil
 
 	case repoAddedMsg:
@@ -397,8 +422,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case repoAddErrMsg:
-		a.message = a.styles.Error.Render(fmt.Sprintf("Failed to add repo: %v", msg.err))
-		a.mode = ModeNormal
+		a.errorTitle = "Add Repository Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
+		return a, nil
+
+	case repoRemovedMsg:
+		a.message = a.styles.Success.Render(fmt.Sprintf("Removed repository '%s' - refreshing...", msg.name))
+		a.err = nil
+		// Refresh registry without removed repo
+		a.registry = registry.NewRegistry(a.cfg)
+		a.loadingMsg = "Fetching skill index..."
+		a.mode = ModeLoading
+		return a, tea.Batch(
+			a.fetchIndex,
+			tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
+		)
+
+	case repoRemoveErrMsg:
+		a.errorTitle = "Remove Repository Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
 		return a, nil
 
 	case syncDoneMsg:
@@ -409,8 +453,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case syncErrMsg:
-		a.message = a.styles.Error.Render(fmt.Sprintf("Sync failed: %v", msg.err))
-		a.mode = ModeNormal
+		a.errorTitle = "Sync Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
 		return a, nil
 
 	case updateDoneMsg:
@@ -420,19 +465,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case updateErrMsg:
-		a.message = a.styles.Error.Render(fmt.Sprintf("Update failed: %v", msg.err))
-		a.mode = ModeNormal
+		a.errorTitle = "Update Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
 		return a, nil
 
 	case backendLinkDoneMsg:
 		a.message = a.styles.Success.Render(fmt.Sprintf("Linked %d backend(s)", msg.linked))
 		a.checkBackendStatus()
+		// Undismiss newly linked backends
+		for _, s := range a.backendStatuses {
+			if s.Linked {
+				a.cfg.UndismissBackend(s.Backend.Name)
+			}
+		}
+		a.cfg.Save()
 		a.mode = ModeNormal
 		return a, nil
 
 	case backendLinkErrMsg:
-		a.message = a.styles.Error.Render(fmt.Sprintf("Backend link failed: %v", msg.err))
-		a.mode = ModeNormal
+		a.errorTitle = "Backend Link Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
 		return a, nil
 
 	case tickMsg:
@@ -476,8 +530,20 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		if a.skills != nil && !a.skills.IsSearching() {
 			if skill := a.skills.Selected(); skill != nil {
-				if !a.manifest.IsInstalled(skill.Name) {
-					a.confirmAction = ConfirmInstall
+				_, tracked := a.manifest.GetInstalled(skill.Name)
+				onDisk := a.manifest.IsInstalled(skill.Name)
+				if !onDisk {
+					// Not on disk: install directly
+					a.confirmSkill = skill
+					a.loadingMsg = fmt.Sprintf("Installing %s...", skill.Name)
+					a.mode = ModeLoading
+					return a, tea.Batch(
+						a.installSkill(skill),
+						tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
+					)
+				} else if !tracked {
+					// On disk but untracked: confirm overwrite
+					a.confirmAction = ConfirmOverwrite
 					a.confirmSkill = skill
 					a.confirmSel = 0
 					a.mode = ModeConfirm
@@ -488,7 +554,19 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		if a.skills != nil && !a.skills.IsSearching() {
-			if skill := a.skills.Selected(); skill != nil {
+			// Check if cursor is on a repo header
+			if header := a.skills.SelectedHeader(); header != nil && header.RepoURL != "" {
+				// Find matching repo in config
+				for _, repo := range a.cfg.Repos {
+					if repo.URL == header.RepoURL {
+						a.confirmAction = ConfirmRemoveRepo
+						a.confirmRepo = repo.Name
+						a.confirmSel = 0
+						a.mode = ModeConfirm
+						return a, nil
+					}
+				}
+			} else if skill := a.skills.Selected(); skill != nil {
 				if a.manifest.IsInstalled(skill.Name) {
 					a.confirmAction = ConfirmRemove
 					a.confirmSkill = skill
@@ -646,9 +724,9 @@ func (a *App) updateAddRepo(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Backend setup modal handling
 func (a *App) initBackendSetup() {
 	a.backendSelection = make([]bool, len(a.backendStatuses))
-	// Pre-select unlinked backends
+	// Pre-select available+unlinked backends
 	for i, s := range a.backendStatuses {
-		a.backendSelection[i] = !s.Linked && s.Error == nil
+		a.backendSelection[i] = s.Available && !s.Linked && s.Error == nil
 	}
 	a.backendCursor = 0
 }
@@ -656,6 +734,13 @@ func (a *App) initBackendSetup() {
 func (a *App) updateBackendSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
+		// Dismiss all available+unlinked backends so modal doesn't re-appear
+		for _, s := range a.backendStatuses {
+			if s.Available && !s.Linked && s.Error == nil {
+				a.cfg.DismissBackend(s.Backend.Name)
+			}
+		}
+		a.cfg.Save()
 		a.mode = ModeNormal
 		return a, nil
 
@@ -672,10 +757,10 @@ func (a *App) updateBackendSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case " ", "x":
-		// Toggle selection (only for unlinked backends)
+		// Toggle selection (only for available+unlinked backends)
 		if a.backendCursor < len(a.backendStatuses) {
 			s := a.backendStatuses[a.backendCursor]
-			if !s.Linked {
+			if s.Available && !s.Linked {
 				a.backendSelection[a.backendCursor] = !a.backendSelection[a.backendCursor]
 			}
 		}
@@ -717,6 +802,18 @@ func (a *App) updateUpdateResult(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// Error modal handling
+func (a *App) updateError(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter", "q":
+		a.mode = ModeNormal
+		a.errorTitle = ""
+		a.errorDetail = ""
+		return a, nil
+	}
+	return a, nil
+}
+
 func (a *App) executeConfirm() (tea.Model, tea.Cmd) {
 	if a.confirmSel == 1 {
 		a.mode = ModeNormal
@@ -732,6 +829,18 @@ func (a *App) executeConfirm() (tea.Model, tea.Cmd) {
 		a.loadingMsg = fmt.Sprintf("Removing %s...", a.confirmSkill.Name)
 		a.mode = ModeLoading
 		return a, a.removeSkill(a.confirmSkill)
+	case ConfirmRemoveRepo:
+		repoName := a.confirmRepo
+		a.loadingMsg = "Removing repository..."
+		a.mode = ModeLoading
+		return a, a.removeRepo(repoName)
+	case ConfirmOverwrite:
+		a.loadingMsg = fmt.Sprintf("Installing %s...", a.confirmSkill.Name)
+		a.mode = ModeLoading
+		return a, tea.Batch(
+			a.overwriteAndInstall(a.confirmSkill),
+			tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
+		)
 	}
 	return a, nil
 }
@@ -758,14 +867,20 @@ func (a *App) refreshPanels() {
 	localSkills := a.manifest.ScanLocalSkills()
 	installed := make(map[string]bool)
 	modified := make(map[string]bool)
+	localOnly := make(map[string]bool)
+	manifestInstalled := a.manifest.ListInstalled()
 	for name, local := range localSkills {
 		installed[name] = true
 		if local.IsModified {
 			modified[name] = true
 		}
+		if _, tracked := manifestInstalled[name]; !tracked {
+			localOnly[name] = true
+		}
 	}
 	a.skills.SetInstalled(installed)
 	a.skills.SetModified(modified)
+	a.skills.SetLocalOnly(localOnly)
 	a.updateDetailPanel()
 }
 
@@ -802,6 +917,38 @@ func (a *App) installSkill(skill *registry.SkillEntry) tea.Cmd {
 	}
 }
 
+func (a *App) overwriteAndInstall(skill *registry.SkillEntry) tea.Cmd {
+	return func() tea.Msg {
+		targetDir := a.manifest.GetSkillPath(skill.Name)
+		// Remove the existing local copy
+		os.RemoveAll(targetDir)
+		// Install from registry
+		result, err := git.Clone(git.CloneOptions{
+			Repo:      skill.Source.Repo,
+			Path:      skill.Source.Path,
+			Tag:       skill.Source.Tag,
+			TargetDir: targetDir,
+		})
+		if err != nil {
+			return installErrMsg{err}
+		}
+		if err := git.ValidateSkill(targetDir); err != nil {
+			os.RemoveAll(targetDir)
+			return installErrMsg{err}
+		}
+		if err := a.manifest.AddSkill(
+			skill.Name,
+			skill.Source.Tag,
+			result.Commit,
+			skill.Source.Repo,
+			skill.Source.Path,
+		); err != nil {
+			return installErrMsg{err}
+		}
+		return installDoneMsg{skill.Name}
+	}
+}
+
 func (a *App) removeSkill(skill *registry.SkillEntry) tea.Cmd {
 	return func() tea.Msg {
 		skillDir := a.manifest.GetSkillPath(skill.Name)
@@ -824,6 +971,15 @@ func (a *App) syncRepos() tea.Cmd {
 			return syncErrMsg{err}
 		}
 		return syncDoneMsg{len(a.registry.ListSkills())}
+	}
+}
+
+func (a *App) removeRepo(name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := a.cfg.RemoveRepo(name); err != nil {
+			return repoRemoveErrMsg{err}
+		}
+		return repoRemovedMsg{name}
 	}
 }
 
@@ -961,7 +1117,11 @@ func (a *App) View() string {
 
 	switch a.mode {
 	case ModeLoading:
-		b.WriteString(a.renderLoading())
+		if a.skills != nil && a.detail != nil {
+			b.WriteString(a.overlayModal(a.renderPanels(), a.renderLoadingContent()))
+		} else {
+			b.WriteString(a.renderLoading())
+		}
 	case ModeNormal:
 		b.WriteString(a.renderPanels())
 	case ModeConfirm:
@@ -972,14 +1132,15 @@ func (a *App) View() string {
 		b.WriteString(a.overlayModal(a.renderPanels(), a.renderBackendSetupContent()))
 	case ModeUpdateResult:
 		b.WriteString(a.overlayModal(a.renderPanels(), a.renderUpdateResultContent()))
+	case ModeError:
+		b.WriteString(a.overlayModal(a.renderPanels(), a.renderErrorContent()))
 	}
 
-	// Error or message
+	// Error or message (always reserve the line to prevent layout jumps)
+	b.WriteString("\n")
 	if a.err != nil {
-		b.WriteString("\n")
 		b.WriteString(a.styles.Error.Render(fmt.Sprintf("Error: %v", a.err)))
 	} else if a.message != "" {
-		b.WriteString("\n")
 		b.WriteString(a.message)
 	}
 
@@ -995,9 +1156,10 @@ func (a *App) renderBackendStatusHeader() string {
 	for _, s := range a.backendStatuses {
 		if s.Linked {
 			parts = append(parts, a.styles.Success.Render(s.Backend.Name+" ✓"))
-		} else {
+		} else if s.Available {
 			parts = append(parts, a.styles.Muted.Render(s.Backend.Name+" ○"))
 		}
+		// Skip backends that are neither linked nor available
 	}
 	return strings.Join(parts, " ")
 }
@@ -1005,6 +1167,28 @@ func (a *App) renderBackendStatusHeader() string {
 func (a *App) renderLoading() string {
 	spinners := []string{"⠋", "⠙", "⠹", "⠸"}
 	return fmt.Sprintf("%s %s", spinners[a.spinnerIdx%len(spinners)], a.loadingMsg)
+}
+
+func (a *App) renderLoadingContent() string {
+	modalBg := lipgloss.Color("#1a1a2e")
+	contentWidth := 40
+	if len(a.loadingMsg)+6 > contentWidth {
+		contentWidth = len(a.loadingMsg) + 6
+	}
+
+	lineBg := lipgloss.NewStyle().
+		Background(modalBg).
+		Width(contentWidth)
+
+	spinners := []string{"⠋", "⠙", "⠹", "⠸"}
+	spinner := spinners[a.spinnerIdx%len(spinners)]
+	line := fmt.Sprintf("  %s %s", spinner, a.loadingMsg)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lineBg.Render(""),
+		lineBg.Render(line),
+		lineBg.Render(""),
+	)
 }
 
 func (a *App) renderPanels() string {
@@ -1100,33 +1284,12 @@ func overlayLine(bg, fg string, startX, totalWidth int) string {
 	fgWidth := ansi.StringWidth(fg)
 	suffixStart := startX + fgWidth
 
-	// For the suffix, we need to pad or extract remaining background
+	// Pad the area to the right of the modal with spaces.
+	// Attempting to recover the background content here is fragile because
+	// ANSI codes and multi-byte border characters get corrupted by truncation.
 	var suffix string
 	if suffixStart < totalWidth {
-		// Calculate how much space remains after the modal
-		remainingWidth := totalWidth - suffixStart
-
-		// Try to get suffix from background if it's wide enough
-		bgWidth := ansi.StringWidth(bg)
-		if bgWidth > suffixStart {
-			// Cut the prefix+modal portion and keep what remains
-			// First get everything up to suffix start, then subtract
-			prefixPlusFg := ansi.Truncate(bg, suffixStart, "")
-			prefixPlusFgWidth := ansi.StringWidth(prefixPlusFg)
-
-			if bgWidth > prefixPlusFgWidth {
-				suffix = ansi.TruncateLeft(bg, bgWidth-prefixPlusFgWidth, "")
-			}
-
-			// Ensure suffix is padded to fill remaining width
-			suffixWidth := ansi.StringWidth(suffix)
-			if suffixWidth < remainingWidth {
-				suffix += strings.Repeat(" ", remainingWidth-suffixWidth)
-			}
-		} else {
-			// Background is too short, just pad with spaces
-			suffix = strings.Repeat(" ", remainingWidth)
-		}
+		suffix = strings.Repeat(" ", totalWidth-suffixStart)
 	}
 
 	// Reset ANSI at transitions to prevent color bleed
@@ -1143,6 +1306,12 @@ func (a *App) renderConfirmContent() string {
 	case ConfirmRemove:
 		title = "Remove Skill"
 		message = fmt.Sprintf("Remove %s?", a.confirmSkill.Name)
+	case ConfirmRemoveRepo:
+		title = "Remove Repository"
+		message = fmt.Sprintf("Remove repo '%s'?", a.confirmRepo)
+	case ConfirmOverwrite:
+		title = "Install from Registry"
+		message = fmt.Sprintf("Replace local %s with registry version?", a.confirmSkill.Name)
 	}
 
 	// Modal background color for consistent styling
@@ -1250,15 +1419,21 @@ func (a *App) renderBackendSetupContent() string {
 
 	for i, s := range a.backendStatuses {
 		expandedPath, _ := config.ExpandPath(s.Backend.Path)
+		selected := i == a.backendCursor
+
 		var line string
+		var suffix string
 
 		if s.Linked {
-			// Already linked
-			status := a.styles.Success.Background(modalBg).Render("✓ linked")
-			line = fmt.Sprintf("  [ ] %s (%s) %s", s.Backend.Name, expandedPath, status)
+			line = fmt.Sprintf("  [ ] %s (%s)", s.Backend.Name, expandedPath)
+			suffix = " ✓ linked"
 		} else if s.Error != nil {
-			status := a.styles.Error.Background(modalBg).Render("✗ error")
-			line = fmt.Sprintf("  [ ] %s (%s) %s", s.Backend.Name, expandedPath, status)
+			line = fmt.Sprintf("  [ ] %s (%s)", s.Backend.Name, expandedPath)
+			suffix = " ✗ error"
+		} else if !s.Available {
+			// Unavailable backend - not installed on this system
+			line = fmt.Sprintf("  [ ] %s", s.Backend.Name)
+			suffix = " not installed"
 		} else {
 			checkbox := " "
 			if a.backendSelection[i] {
@@ -1266,20 +1441,41 @@ func (a *App) renderBackendSetupContent() string {
 			}
 			line = fmt.Sprintf("  [%s] %s (%s)", checkbox, s.Backend.Name, expandedPath)
 			if s.HasFiles {
-				line += " (has files)"
+				suffix = " (has files)"
 			}
 		}
 
-		lineStyle := lineBg
-		if i == a.backendCursor {
-			lineStyle = lipgloss.NewStyle().
+		if selected && !s.Available && !s.Linked && s.Error == nil {
+			// Dim highlight for unavailable backends
+			dimCursorStyle := lipgloss.NewStyle().
+				Background(lipgloss.Color("#374151")).
+				Foreground(lipgloss.Color("#6B7280")).
+				Width(contentWidth)
+			lines = append(lines, dimCursorStyle.Render(line+suffix))
+		} else if selected {
+			// Render entire line uniformly with cursor highlight
+			cursorStyle := lipgloss.NewStyle().
 				Background(lipgloss.Color("#7C3AED")).
 				Foreground(lipgloss.Color("#FFFFFF")).
 				Width(contentWidth).
 				Bold(true)
+			lines = append(lines, cursorStyle.Render(line+suffix))
+		} else if !s.Available && !s.Linked && s.Error == nil {
+			// Muted/gray for unavailable backends
+			mutedLine := a.styles.Muted.Render(line + suffix)
+			lines = append(lines, lineBg.Render(mutedLine))
+		} else {
+			// Render label + styled suffix separately on modal background
+			var styledLine string
+			if s.Linked {
+				styledLine = line + a.styles.Success.Render(suffix)
+			} else if s.Error != nil {
+				styledLine = line + a.styles.Error.Render(suffix)
+			} else {
+				styledLine = line + suffix
+			}
+			lines = append(lines, lineBg.Render(styledLine))
 		}
-
-		lines = append(lines, lineStyle.Render(line))
 	}
 
 	lines = append(lines, emptyLine)
@@ -1336,6 +1532,40 @@ func (a *App) renderUpdateResultContent() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+func (a *App) renderErrorContent() string {
+	modalBg := lipgloss.Color("#1a1a2e")
+	contentWidth := 60
+
+	lineBg := lipgloss.NewStyle().
+		Background(modalBg).
+		Width(contentWidth)
+
+	titleStyled := a.styles.Error.Background(modalBg).Width(contentWidth).Render(a.errorTitle)
+	emptyLine := lineBg.Render("")
+
+	var lines []string
+	lines = append(lines, titleStyled, emptyLine)
+
+	// Split error detail into lines, truncate to fit modal width
+	for _, detailLine := range strings.Split(a.errorDetail, "\n") {
+		detailLine = strings.TrimRight(detailLine, " \t\r")
+		if len(detailLine) > contentWidth-2 {
+			detailLine = detailLine[:contentWidth-5] + "..."
+		}
+		if detailLine == "" {
+			continue
+		}
+		styled := a.styles.Muted.Background(modalBg).Render("  " + detailLine)
+		lines = append(lines, lineBg.Render(styled))
+	}
+
+	lines = append(lines, emptyLine)
+	helpStyled := a.styles.Muted.Background(modalBg).Width(contentWidth).Render("enter/esc: close")
+	lines = append(lines, helpStyled)
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
 func (a *App) renderStatusBar() string {
 	var pairs []string
 
@@ -1364,7 +1594,7 @@ func (a *App) renderStatusBar() string {
 			"enter", "link",
 			"esc", "skip",
 		}
-	} else if a.mode == ModeUpdateResult {
+	} else if a.mode == ModeUpdateResult || a.mode == ModeError {
 		pairs = []string{
 			"enter", "close",
 			"esc", "close",

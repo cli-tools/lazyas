@@ -8,7 +8,9 @@ A lazygit/lazydocker-style TUI for managing Agent Skills with an upstream regist
 
 ### Multi-Backend Support
 
-lazyas manages ONE central skills directory (`~/.lazyas/skills/`) and uses symlinks to connect multiple AI agent backends. Each backend (Claude Code, Codex, etc.) symlinks its skills directory to the central location, so all backends share the same skills without duplication.
+lazyas manages ONE central skills directory (`~/.lazyas/skills/`) and uses symlinks to connect multiple AI agent backends. Each backend symlinks its skills directory to the central location, so all backends share the same skills without duplication.
+
+Built-in backends: Claude Code, OpenAI Codex, Gemini CLI, Cursor, GitHub Copilot, Amp, Goose, OpenCode, and Mistral Vibe.
 
 ### Scope
 
@@ -122,6 +124,13 @@ lazyas config repo list
 # Symlinks (created by lazyas)
 ~/.claude/skills → ~/.lazyas/skills
 ~/.codex/skills → ~/.lazyas/skills
+~/.gemini/skills → ~/.lazyas/skills
+~/.cursor/skills → ~/.lazyas/skills
+~/.copilot/skills → ~/.lazyas/skills
+$XDG_CONFIG_HOME/agents/skills → ~/.lazyas/skills    # Amp
+$XDG_CONFIG_HOME/goose/skills → ~/.lazyas/skills     # Goose
+$XDG_CONFIG_HOME/opencode/skills → ~/.lazyas/skills  # OpenCode
+~/.vibe/skills → ~/.lazyas/skills               # Mistral Vibe
 ```
 
 ### Code Structure
@@ -141,6 +150,7 @@ internal/
 ├── manifest/               # Local manifest management
 ├── config/                 # Configuration (backends, repos)
 ├── symlink/                # Symlink management for backends
+├── skillmd/                # Shared SKILL.md parsing helpers
 ├── git/                    # Git clone operations
 └── cli/                    # Cobra CLI commands
 ```
@@ -160,7 +170,7 @@ path = "~/work/.ai/skills"
 description = "Internal AI tool"
 ```
 
-Built-in backends (claude, codex) are configured automatically. Custom backends can be added via `lazyas backend add` or the config file.
+Built-in backends (claude, codex, gemini, cursor, copilot, amp, goose, opencode, vibe) are configured automatically. Custom backends can be added via `lazyas backend add` or the config file.
 
 ## Registry Format
 
@@ -192,7 +202,7 @@ Each skill must contain a `SKILL.md` file that describes the skill's capabilitie
 The UI follows the lazy* tool design pattern:
 
 ```
-lazyas  Lazy Agent Skills           claude ✓ codex ✓
+lazyas  Lazy Agent Skills      claude ✓ codex ✓ gemini ✓ ...
 ┌──────────────────┬──────────────────────────────┐
 │   Skills Panel   │        Detail Panel          │
 │                  │  ┌────┬─────────┐            │
