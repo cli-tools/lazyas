@@ -29,7 +29,7 @@ func makeSkills(n int) []registry.SkillEntry {
 func TestSkillsPanel_ViewFillsHeight(t *testing.T) {
 	// Create 50 skills — more than enough to fill any screen.
 	skills := makeSkills(50)
-	installed := map[string]bool{}
+	installed := map[string]string{}
 	modified := map[string]bool{}
 
 	p := NewSkillsPanel(skills, installed, modified)
@@ -56,7 +56,7 @@ func TestSkillsPanel_ViewFillsHeight(t *testing.T) {
 func TestSkillsPanel_ViewFillsHeight_FewItems(t *testing.T) {
 	// Only 5 skills — fewer than the panel height.
 	skills := makeSkills(5)
-	installed := map[string]bool{}
+	installed := map[string]string{}
 	modified := map[string]bool{}
 
 	p := NewSkillsPanel(skills, installed, modified)
@@ -76,7 +76,7 @@ func TestSkillsPanel_ViewFillsHeight_FewItems(t *testing.T) {
 func TestSkillsPanel_DefaultHeight_IsUsable(t *testing.T) {
 	// Verify the default height (before any SetSize call) can show items.
 	skills := makeSkills(30)
-	installed := map[string]bool{}
+	installed := map[string]string{}
 	modified := map[string]bool{}
 
 	p := NewSkillsPanel(skills, installed, modified)
@@ -96,7 +96,7 @@ func TestSkillsPanel_DefaultHeight_IsUsable(t *testing.T) {
 
 func TestSkillsPanel_ScrollShowsAllItems(t *testing.T) {
 	skills := makeSkills(50)
-	installed := map[string]bool{}
+	installed := map[string]string{}
 	modified := map[string]bool{}
 
 	p := NewSkillsPanel(skills, installed, modified)

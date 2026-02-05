@@ -10,7 +10,7 @@ import (
 
 func TestGroupedSkillList_GroupsByRepo(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{"test-skill-1": true}
+	installed := map[string]string{"test-skill-1": "https://github.com/example/skills"}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -32,7 +32,7 @@ func TestGroupedSkillList_GroupsByRepo(t *testing.T) {
 
 func TestGroupedSkillList_NoInstalledGroup_WhenNoneInstalled(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -44,7 +44,7 @@ func TestGroupedSkillList_NoInstalledGroup_WhenNoneInstalled(t *testing.T) {
 
 func TestGroupedSkillList_Navigation_SkipsHeaders(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{"test-skill-1": true}
+	installed := map[string]string{"test-skill-1": "https://github.com/example/skills"}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -71,7 +71,7 @@ func TestGroupedSkillList_Navigation_SkipsHeaders(t *testing.T) {
 
 func TestGroupedSkillList_ToggleCollapse(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -109,7 +109,7 @@ func TestGroupedSkillList_ToggleCollapse(t *testing.T) {
 
 func TestGroupedSkillList_View_ContainsHeaders(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{"test-skill-1": true}
+	installed := map[string]string{"test-skill-1": "https://github.com/example/skills"}
 
 	list := NewGroupedSkillList(skills, installed)
 	list.SetHeight(20)
@@ -129,7 +129,7 @@ func TestGroupedSkillList_View_ContainsHeaders(t *testing.T) {
 
 func TestGroupedSkillList_SetSkills_ResetsState(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -149,7 +149,7 @@ func TestGroupedSkillList_SetSkills_ResetsState(t *testing.T) {
 
 func TestGroupedSkillList_MoveToTop_MoveToBottom(t *testing.T) {
 	skills := tt.ManySkills(20)
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 	list.SetHeight(10)
@@ -184,7 +184,7 @@ func TestGroupedSkillList_MoveToTop_MoveToBottom(t *testing.T) {
 
 func TestGroupedSkillList_Update_KeyHandling(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -205,7 +205,7 @@ func TestGroupedSkillList_Update_KeyHandling(t *testing.T) {
 
 func TestGroupedSkillList_ToggleCurrentGroup(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{"test-skill-1": true}
+	installed := map[string]string{"test-skill-1": "https://github.com/example/skills"}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -223,7 +223,7 @@ func TestGroupedSkillList_ToggleCurrentGroup(t *testing.T) {
 
 func TestGroupedSkillList_EmptyList(t *testing.T) {
 	skills := []registry.SkillEntry{}
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -246,7 +246,7 @@ func TestGroupedSkillList_EmptyList(t *testing.T) {
 
 func TestGroupedSkillList_SetInstalled_RebuildsGroups(t *testing.T) {
 	skills := tt.TestSkills()
-	installed := map[string]bool{}
+	installed := map[string]string{}
 
 	list := NewGroupedSkillList(skills, installed)
 
@@ -263,7 +263,7 @@ func TestGroupedSkillList_SetInstalled_RebuildsGroups(t *testing.T) {
 	}
 
 	// Set some as installed
-	list.SetInstalled(map[string]bool{"test-skill-1": true})
+	list.SetInstalled(map[string]string{"test-skill-1": "https://github.com/example/skills"})
 
 	// Now should have installed group
 	hasInstalled = false

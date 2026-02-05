@@ -34,7 +34,7 @@ func NewInstalledScreen(mfst SkillManifest, reg SkillRegistry) *InstalledScreen 
 func (s *InstalledScreen) refreshList() {
 	installed := s.manifest.ListInstalled()
 	skills := make([]registry.SkillEntry, 0, len(installed))
-	installedMap := make(map[string]bool)
+	installedMap := make(map[string]string)
 
 	// Get skill names sorted
 	names := make([]string, 0, len(installed))
@@ -45,7 +45,7 @@ func (s *InstalledScreen) refreshList() {
 
 	for _, name := range names {
 		info := installed[name]
-		installedMap[name] = true
+		installedMap[name] = info.SourceRepo
 
 		// Try to get full info from registry
 		if regSkill := s.registry.GetSkill(name); regSkill != nil {

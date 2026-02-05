@@ -43,7 +43,7 @@ type SkillsPanel struct {
 	skills      []registry.SkillEntry
 	groups      []SkillGroup
 	flatItems   []ListItem
-	installed   map[string]bool
+	installed   map[string]string
 	modified    map[string]bool
 	localOnly   map[string]bool // On disk but not tracked in manifest
 	cursor      int
@@ -116,7 +116,7 @@ func DefaultSkillsPanelStyles() SkillsPanelStyles {
 }
 
 // NewSkillsPanel creates a new skills panel
-func NewSkillsPanel(skills []registry.SkillEntry, installed, modified map[string]bool) *SkillsPanel {
+func NewSkillsPanel(skills []registry.SkillEntry, installed map[string]string, modified map[string]bool) *SkillsPanel {
 	ti := textinput.New()
 	ti.Placeholder = "Search..."
 	ti.CharLimit = 50
@@ -144,7 +144,7 @@ func (p *SkillsPanel) buildGroups() {
 	repoGroups := make(map[string][]registry.SkillEntry)
 
 	for _, skill := range p.skills {
-		if p.installed[skill.Name] {
+		if p.isInstalled(skill) {
 			installedSkills = append(installedSkills, skill)
 		}
 		// Add to repo group (so installed skills also appear under their repo)
@@ -266,10 +266,19 @@ func (p *SkillsPanel) SetSkills(skills []registry.SkillEntry) {
 }
 
 // SetInstalled updates the installed map
-func (p *SkillsPanel) SetInstalled(installed map[string]bool) {
+func (p *SkillsPanel) SetInstalled(installed map[string]string) {
 	p.installed = installed
 	p.buildGroups()
 	p.rebuildFlatList()
+}
+
+// isInstalled checks whether a specific skill entry is the one actually installed.
+func (p *SkillsPanel) isInstalled(skill registry.SkillEntry) bool {
+	repo, ok := p.installed[skill.Name]
+	if !ok {
+		return false
+	}
+	return repo == "" || repo == skill.Source.Repo
 }
 
 // SetModified updates the modified map
@@ -554,10 +563,11 @@ func (p *SkillsPanel) renderSkill(skill *registry.SkillEntry, selected bool) str
 		name = name[:maxWidth-3] + "..."
 	}
 
+	isInst := p.isInstalled(*skill)
 	if selected && p.focused {
 		// Use plain status chars to avoid ANSI conflicts with highlight
 		var statusChar string
-		if p.installed[skill.Name] {
+		if isInst {
 			if p.modified[skill.Name] {
 				statusChar = "◉"
 			} else if p.localOnly[skill.Name] {
@@ -577,7 +587,7 @@ func (p *SkillsPanel) renderSkill(skill *registry.SkillEntry, selected bool) str
 	}
 
 	var status string
-	if p.installed[skill.Name] {
+	if isInst {
 		if p.modified[skill.Name] {
 			status = p.styles.StatusModified.String()
 		} else if p.localOnly[skill.Name] {

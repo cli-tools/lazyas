@@ -249,17 +249,19 @@ func (a *App) doFetchIndex(force bool) tea.Msg {
 func (a *App) initPanels() {
 	// Scan for local skills
 	localSkills := a.manifest.ScanLocalSkills()
-	installed := make(map[string]bool)
+	installed := make(map[string]string)
 	modified := make(map[string]bool)
 	localOnly := make(map[string]bool)
 	manifestInstalled := a.manifest.ListInstalled()
 	for name, local := range localSkills {
-		installed[name] = true
+		if mi, tracked := manifestInstalled[name]; tracked {
+			installed[name] = mi.SourceRepo
+		} else {
+			installed[name] = local.Path
+			localOnly[name] = true
+		}
 		if local.IsModified {
 			modified[name] = true
-		}
-		if _, tracked := manifestInstalled[name]; !tracked {
-			localOnly[name] = true
 		}
 	}
 
@@ -944,17 +946,19 @@ func (a *App) filterSkills() {
 
 func (a *App) refreshPanels() {
 	localSkills := a.manifest.ScanLocalSkills()
-	installed := make(map[string]bool)
+	installed := make(map[string]string)
 	modified := make(map[string]bool)
 	localOnly := make(map[string]bool)
 	manifestInstalled := a.manifest.ListInstalled()
 	for name, local := range localSkills {
-		installed[name] = true
+		if mi, tracked := manifestInstalled[name]; tracked {
+			installed[name] = mi.SourceRepo
+		} else {
+			installed[name] = local.Path
+			localOnly[name] = true
+		}
 		if local.IsModified {
 			modified[name] = true
-		}
-		if _, tracked := manifestInstalled[name]; !tracked {
-			localOnly[name] = true
 		}
 	}
 	a.skills.SetInstalled(installed)

@@ -13,14 +13,14 @@ import (
 // SkillList is a component for displaying a list of skills
 type SkillList struct {
 	skills    []registry.SkillEntry
-	installed map[string]bool
+	installed map[string]string
 	cursor    int
 	height    int
 	offset    int
 }
 
 // NewSkillList creates a new skill list
-func NewSkillList(skills []registry.SkillEntry, installed map[string]bool) SkillList {
+func NewSkillList(skills []registry.SkillEntry, installed map[string]string) SkillList {
 	return SkillList{
 		skills:    skills,
 		installed: installed,
@@ -38,8 +38,17 @@ func (l *SkillList) SetSkills(skills []registry.SkillEntry) {
 }
 
 // SetInstalled updates the installed map
-func (l *SkillList) SetInstalled(installed map[string]bool) {
+func (l *SkillList) SetInstalled(installed map[string]string) {
 	l.installed = installed
+}
+
+// isInstalled checks whether a specific skill entry is the one actually installed.
+func (l *SkillList) isInstalled(skill registry.SkillEntry) bool {
+	repo, ok := l.installed[skill.Name]
+	if !ok {
+		return false
+	}
+	return repo == "" || repo == skill.Source.Repo
 }
 
 // SetHeight sets the visible height
@@ -167,7 +176,7 @@ func (l *SkillList) View() string {
 
 		// Status indicator
 		var status string
-		if l.installed[skill.Name] {
+		if l.isInstalled(skill) {
 			status = styles.StatusInstalled.String()
 		} else {
 			status = styles.StatusAvailable.String()

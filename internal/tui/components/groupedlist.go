@@ -40,7 +40,7 @@ type GroupedSkillList struct {
 	skills      []registry.SkillEntry
 	groups      []SkillGroup
 	flatItems   []ListItem
-	installed   map[string]bool
+	installed   map[string]string
 	modified    map[string]bool // Skills with local modifications
 	cursor      int
 	height      int
@@ -49,7 +49,7 @@ type GroupedSkillList struct {
 }
 
 // NewGroupedSkillList creates a new grouped skill list
-func NewGroupedSkillList(skills []registry.SkillEntry, installed map[string]bool) GroupedSkillList {
+func NewGroupedSkillList(skills []registry.SkillEntry, installed map[string]string) GroupedSkillList {
 	gl := GroupedSkillList{
 		skills:      skills,
 		installed:   installed,
@@ -65,7 +65,7 @@ func NewGroupedSkillList(skills []registry.SkillEntry, installed map[string]bool
 }
 
 // NewGroupedSkillListWithStatus creates a grouped list with modification status
-func NewGroupedSkillListWithStatus(skills []registry.SkillEntry, installed, modified map[string]bool) GroupedSkillList {
+func NewGroupedSkillListWithStatus(skills []registry.SkillEntry, installed map[string]string, modified map[string]bool) GroupedSkillList {
 	gl := GroupedSkillList{
 		skills:      skills,
 		installed:   installed,
@@ -89,7 +89,7 @@ func (l *GroupedSkillList) buildGroups() {
 	repoGroups := make(map[string][]registry.SkillEntry)
 
 	for _, skill := range l.skills {
-		if l.installed[skill.Name] {
+		if l.isInstalled(skill) {
 			installedSkills = append(installedSkills, skill)
 		} else {
 			repo := skill.Source.Repo
@@ -192,10 +192,20 @@ func (l *GroupedSkillList) SetSkills(skills []registry.SkillEntry) {
 }
 
 // SetInstalled updates the installed map and rebuilds groups
-func (l *GroupedSkillList) SetInstalled(installed map[string]bool) {
+func (l *GroupedSkillList) SetInstalled(installed map[string]string) {
 	l.installed = installed
 	l.buildGroups()
 	l.rebuildFlatList()
+}
+
+// isInstalled checks whether a specific skill entry is the one actually installed.
+// The installed map stores name -> source repo; a skill matches if its repo matches.
+func (l *GroupedSkillList) isInstalled(skill registry.SkillEntry) bool {
+	repo, ok := l.installed[skill.Name]
+	if !ok {
+		return false
+	}
+	return repo == "" || repo == skill.Source.Repo
 }
 
 // SetModified updates the modified status map
@@ -424,7 +434,7 @@ func (l *GroupedSkillList) renderHeader(item ListItem, selected bool) string {
 func (l *GroupedSkillList) renderSkill(skill *registry.SkillEntry, selected bool) string {
 	// Status indicator
 	var status string
-	if l.installed[skill.Name] {
+	if l.isInstalled(*skill) {
 		if l.modified[skill.Name] {
 			status = styles.StatusModified.String()
 		} else {
