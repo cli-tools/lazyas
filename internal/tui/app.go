@@ -412,10 +412,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case indexErrorMsg:
 		a.err = msg.err
-		a.mode = ModeNormal
 		// Initialize panels with local skills only
 		a.initPanels()
 		a.checkBackendStatus()
+		// Show backend setup or starter kit if applicable
+		if symlink.HasNewBackends(a.backendStatuses, a.cfg.DismissedBackends) {
+			a.mode = ModeBackendSetup
+			a.initBackendSetup()
+		} else if len(a.cfg.Repos) == 0 && !a.cfg.StarterKitDismissed {
+			a.initStarterKit()
+			a.mode = ModeStarterKit
+		} else {
+			a.mode = ModeNormal
+		}
 		return a, nil
 
 	case glowDoneMsg:

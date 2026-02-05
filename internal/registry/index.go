@@ -39,7 +39,7 @@ func (r *Registry) Fetch(forceRefresh bool) error {
 	// No repos configured
 	if len(r.cfg.Repos) == 0 {
 		r.index = &Index{}
-		return fmt.Errorf("no repositories configured - add repos to ~/.config/lazyas/config.toml")
+		return fmt.Errorf("no repositories configured - add repos to %s", r.cfg.ConfigPath)
 	}
 
 	// Fetch from all configured repos
