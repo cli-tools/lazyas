@@ -270,8 +270,22 @@ func (a *App) initPanels() {
 	// Merge registry skills with local-only skills
 	skills := mergeSkills(a.registry.ListSkills(), localSkills, "")
 
+	// Preserve collapse state from existing panel or config
+	var collapseMap map[string]bool
+	if a.skills != nil {
+		collapseMap = a.skills.GetCollapseMap()
+	} else if len(a.cfg.CollapsedGroups) > 0 {
+		collapseMap = make(map[string]bool, len(a.cfg.CollapsedGroups))
+		for _, name := range a.cfg.CollapsedGroups {
+			collapseMap[name] = true
+		}
+	}
+
 	// Create panels
 	a.skills = panels.NewSkillsPanel(skills, installed, modified)
+	if collapseMap != nil {
+		a.skills.SetCollapseMap(collapseMap)
+	}
 	a.skills.SetLocalOnly(localOnly)
 	a.skills.SetFocused(true)
 	a.skills.SetSize(a.layout.LeftContentWidth(), a.layout.ContentHeight())
@@ -282,6 +296,20 @@ func (a *App) initPanels() {
 
 	// Update detail panel with selected skill
 	a.updateDetailPanel()
+}
+
+func (a *App) saveCollapseState() {
+	if a.skills == nil {
+		return
+	}
+	var collapsed []string
+	for name, isCollapsed := range a.skills.GetCollapseMap() {
+		if isCollapsed {
+			collapsed = append(collapsed, name)
+		}
+	}
+	a.cfg.CollapsedGroups = collapsed
+	a.cfg.Save()
 }
 
 func mergeSkills(registrySkills []registry.SkillEntry, localSkills map[string]manifest.LocalSkill, query string) []registry.SkillEntry {
@@ -750,6 +778,11 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// If search was just submitted (Enter exits search mode), filter skills
 		if key == "enter" && wasSearching && !a.skills.IsSearching() {
 			a.filterSkills()
+		}
+
+		// Persist collapse state when toggled
+		if key == "z" {
+			a.saveCollapseState()
 		}
 
 		// Update detail if selection changed
@@ -1706,10 +1739,6 @@ func (a *App) initStarterKit() {
 	a.pruneDeadStarterKitRepos()
 
 	a.starterKitSelection = make([]bool, len(config.StarterKitRepos))
-	// Pre-select repos not already in config
-	for i, repo := range config.StarterKitRepos {
-		a.starterKitSelection[i] = !a.hasRepo(repo.Name, repo.URL)
-	}
 	a.starterKitCursor = 0
 }
 
@@ -1790,6 +1819,22 @@ func (a *App) updateStarterKit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case "a", "A":
+		// Toggle all: if any toggleable repo is unselected, select all; otherwise deselect all
+		anyOff := false
+		for i, repo := range config.StarterKitRepos {
+			if !a.hasRepo(repo.Name, repo.URL) && !a.starterKitSelection[i] {
+				anyOff = true
+				break
+			}
+		}
+		for i, repo := range config.StarterKitRepos {
+			if !a.hasRepo(repo.Name, repo.URL) {
+				a.starterKitSelection[i] = anyOff
+			}
+		}
+		return a, nil
+
 	case "enter":
 		var selected []config.Repo
 		for i, sel := range a.starterKitSelection {
@@ -1851,8 +1896,8 @@ func (a *App) renderStarterKitContent() string {
 		var suffix string
 
 		if alreadyAdded {
-			line = fmt.Sprintf("  [ ] %s", repo.Name)
-			suffix = "  ✓ added"
+			line = fmt.Sprintf("  [x] %s", repo.Name)
+			suffix = "  added"
 		} else {
 			checkbox := " "
 			if a.starterKitSelection[i] {
@@ -1883,7 +1928,7 @@ func (a *App) renderStarterKitContent() string {
 	}
 
 	lines = append(lines, emptyLine)
-	helpStyled := a.styles.Muted.Background(modalBg).Width(contentWidth).Render("space: toggle  enter: add  esc: skip")
+	helpStyled := a.styles.Muted.Background(modalBg).Width(contentWidth).Render("space: toggle  a: toggle all  enter: add  esc: skip")
 	lines = append(lines, helpStyled)
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

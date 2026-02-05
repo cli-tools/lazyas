@@ -54,6 +54,40 @@ var KnownBackends = []Backend{
 	{Name: "vibe", Path: "~/.vibe/skills", Description: "Mistral Vibe"},
 }
 
+// ConfigStore abstracts config persistence (serialization + I/O).
+type ConfigStore interface {
+	Save(cf *ConfigFile) error
+	Load() (*ConfigFile, error)
+}
+
+// TOMLStore reads and writes ConfigFile as TOML on disk.
+type TOMLStore struct {
+	Path string
+}
+
+// Save writes cf to disk as TOML, creating parent directories as needed.
+func (s *TOMLStore) Save(cf *ConfigFile) error {
+	dir := filepath.Dir(s.Path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(s.Path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return toml.NewEncoder(f).Encode(cf)
+}
+
+// Load reads a TOML file from disk into a ConfigFile.
+func (s *TOMLStore) Load() (*ConfigFile, error) {
+	var cf ConfigFile
+	if _, err := toml.DecodeFile(s.Path, &cf); err != nil {
+		return nil, err
+	}
+	return &cf, nil
+}
+
 // ConfigFile represents the TOML config file structure
 type ConfigFile struct {
 	Repos               []Repo    `toml:"repos"`
@@ -62,10 +96,12 @@ type ConfigFile struct {
 	Backends            []Backend `toml:"backends,omitempty"`
 	DismissedBackends   []string  `toml:"dismissed_backends,omitempty"`
 	StarterKitDismissed bool      `toml:"starter_kit_dismissed,omitempty"`
+	CollapsedGroups     []string  `toml:"collapsed_groups,omitempty"`
 }
 
 // Config holds the runtime configuration
 type Config struct {
+	Store               ConfigStore
 	ConfigDir           string
 	ConfigPath          string
 	ManifestPath        string
@@ -78,6 +114,7 @@ type Config struct {
 	Backends            []Backend // Configured backends (symlink targets)
 	DismissedBackends   []string  // Backend names dismissed from auto-show
 	StarterKitDismissed bool      // Whether starter kit modal was dismissed
+	CollapsedGroups     []string  // Group names that are collapsed in the TUI
 }
 
 // xdgConfigHome returns $XDG_CONFIG_HOME, falling back to ~/.config per spec.
@@ -128,9 +165,12 @@ func DefaultConfig() (*Config, error) {
 	backends := make([]Backend, len(KnownBackends))
 	copy(backends, KnownBackends)
 
+	configPath := filepath.Join(configDir, ConfigFileName)
+
 	cfg := &Config{
+		Store:        &TOMLStore{Path: configPath},
 		ConfigDir:    configDir,
-		ConfigPath:   filepath.Join(configDir, ConfigFileName),
+		ConfigPath:   configPath,
 		ManifestPath: filepath.Join(configDir, ManifestFileName),
 		CachePath:    filepath.Join(configDir, CacheFileName),
 		SkillsDir:    skillsDir,
@@ -148,10 +188,10 @@ func DefaultConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// Load reads the config from disk
+// Load reads the config via the configured store
 func (c *Config) Load() error {
-	var cf ConfigFile
-	if _, err := toml.DecodeFile(c.ConfigPath, &cf); err != nil {
+	cf, err := c.Store.Load()
+	if err != nil {
 		return err
 	}
 
@@ -169,6 +209,7 @@ func (c *Config) Load() error {
 	c.Viewer = cf.Viewer
 	c.DismissedBackends = cf.DismissedBackends
 	c.StarterKitDismissed = cf.StarterKitDismissed
+	c.CollapsedGroups = cf.CollapsedGroups
 
 	return nil
 }
@@ -194,7 +235,7 @@ func mergeBackends(known, configured []Backend) []Backend {
 	return result
 }
 
-// Save writes the config to disk
+// Save writes the config via the configured store
 func (c *Config) Save() error {
 	if err := c.EnsureDirs(); err != nil {
 		return err
@@ -206,6 +247,7 @@ func (c *Config) Save() error {
 		Viewer:              c.Viewer,
 		DismissedBackends:   c.DismissedBackends,
 		StarterKitDismissed: c.StarterKitDismissed,
+		CollapsedGroups:     c.CollapsedGroups,
 	}
 
 	// Only save backends that differ from known backends or are custom
@@ -214,14 +256,7 @@ func (c *Config) Save() error {
 		cf.Backends = customBackends
 	}
 
-	f, err := os.Create(c.ConfigPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	encoder := toml.NewEncoder(f)
-	return encoder.Encode(cf)
+	return c.Store.Save(&cf)
 }
 
 // filterCustomBackends returns backends that are custom or modified from known defaults

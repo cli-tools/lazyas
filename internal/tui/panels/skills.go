@@ -265,6 +265,18 @@ func (p *SkillsPanel) SetSkills(skills []registry.SkillEntry) {
 	p.rebuildFlatList()
 }
 
+// GetCollapseMap returns the current collapse state
+func (p *SkillsPanel) GetCollapseMap() map[string]bool {
+	return p.collapseMap
+}
+
+// SetCollapseMap restores collapse state and rebuilds the list
+func (p *SkillsPanel) SetCollapseMap(m map[string]bool) {
+	p.collapseMap = m
+	p.buildGroups()
+	p.rebuildFlatList()
+}
+
 // SetInstalled updates the installed map
 func (p *SkillsPanel) SetInstalled(installed map[string]string) {
 	p.installed = installed

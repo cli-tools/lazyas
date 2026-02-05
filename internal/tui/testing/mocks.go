@@ -1,9 +1,37 @@
 package testing
 
 import (
+	"lazyas/internal/config"
 	"lazyas/internal/manifest"
 	"lazyas/internal/registry"
 )
+
+// MockConfigStore implements config.ConfigStore for testing
+type MockConfigStore struct {
+	Data      *config.ConfigFile
+	SaveErr   error
+	SaveCount int
+}
+
+// NewMockConfigStore creates a new MockConfigStore
+func NewMockConfigStore() *MockConfigStore {
+	return &MockConfigStore{}
+}
+
+// Save captures the ConfigFile and increments SaveCount
+func (m *MockConfigStore) Save(cf *config.ConfigFile) error {
+	m.SaveCount++
+	m.Data = cf
+	return m.SaveErr
+}
+
+// Load returns the stored ConfigFile, or an empty one if nil
+func (m *MockConfigStore) Load() (*config.ConfigFile, error) {
+	if m.Data == nil {
+		return &config.ConfigFile{}, nil
+	}
+	return m.Data, nil
+}
 
 // MockRegistry implements tui.SkillRegistry for testing
 type MockRegistry struct {

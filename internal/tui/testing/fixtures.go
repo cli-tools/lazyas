@@ -95,6 +95,7 @@ func TestSkillsWithInstalled() ([]registry.SkillEntry, map[string]manifest.Insta
 // TestConfig returns a test configuration
 func TestConfig() *config.Config {
 	return &config.Config{
+		Store:        NewMockConfigStore(),
 		ConfigDir:    "/tmp/lazyas-test/.lazyas",
 		ConfigPath:   "/tmp/lazyas-test/.lazyas/config.toml",
 		SkillsDir:    "/tmp/lazyas-test/skills",
