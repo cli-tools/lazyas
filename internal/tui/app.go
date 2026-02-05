@@ -28,6 +28,7 @@ const (
 	ModeLoading
 	ModeAddRepo
 	ModeBackendSetup
+	ModeStarterKit
 	ModeUpdateResult
 	ModeError
 )
@@ -75,6 +76,10 @@ type App struct {
 	backendStatuses  []symlink.LinkStatus
 	backendSelection []bool // Checkboxes for backend setup
 	backendCursor    int    // Cursor in backend setup modal
+
+	// Starter kit
+	starterKitSelection []bool
+	starterKitCursor    int
 
 	// Update results
 	updateResult *updateDoneMsg
@@ -210,6 +215,8 @@ type (
 	updateErrMsg       struct{ err error }
 	backendLinkDoneMsg struct{ linked int }
 	backendLinkErrMsg  struct{ err error }
+	starterKitDoneMsg  struct{ count int }
+	starterKitErrMsg   struct{ err error }
 	tickMsg            struct{}
 )
 
@@ -219,11 +226,19 @@ type updateSkillResult struct {
 }
 
 func (a *App) fetchIndex() tea.Msg {
+	return a.doFetchIndex(false)
+}
+
+func (a *App) fetchIndexForced() tea.Msg {
+	return a.doFetchIndex(true)
+}
+
+func (a *App) doFetchIndex(force bool) tea.Msg {
 	if err := a.manifest.Load(); err != nil {
 		return indexErrorMsg{err}
 	}
 
-	if err := a.registry.Fetch(false); err != nil {
+	if err := a.registry.Fetch(force); err != nil {
 		return indexErrorMsg{err}
 	}
 
@@ -359,6 +374,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateAddRepo(msg)
 		case ModeBackendSetup:
 			return a.updateBackendSetup(msg)
+		case ModeStarterKit:
+			return a.updateStarterKit(msg)
 		case ModeUpdateResult:
 			return a.updateUpdateResult(msg)
 		case ModeError:
@@ -368,10 +385,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case indexFetchedMsg:
 		a.initPanels()
 		a.checkBackendStatus()
+		// Replace stale "refreshing..." message with completion summary
+		if a.message != "" {
+			a.message = a.styles.Success.Render(fmt.Sprintf("Done. %d skill(s) available.", len(a.registry.ListSkills())))
+		}
 		// Show backend setup modal if there are new available backends
 		if symlink.HasNewBackends(a.backendStatuses, a.cfg.DismissedBackends) {
 			a.mode = ModeBackendSetup
 			a.initBackendSetup()
+		} else if len(a.cfg.Repos) == 0 && !a.cfg.StarterKitDismissed {
+			a.initStarterKit()
+			a.mode = ModeStarterKit
 		} else {
 			a.mode = ModeNormal
 		}
@@ -412,12 +436,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repoAddedMsg:
 		a.message = a.styles.Success.Render(fmt.Sprintf("Added repository '%s' - refreshing...", msg.name))
 		a.err = nil
-		// Refresh registry with new repo
+		// Refresh registry with new repo (force to bypass cache)
 		a.registry = registry.NewRegistry(a.cfg)
 		a.loadingMsg = "Fetching skill index..."
 		a.mode = ModeLoading
 		return a, tea.Batch(
-			a.fetchIndex,
+			a.fetchIndexForced,
 			tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
 		)
 
@@ -430,12 +454,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case repoRemovedMsg:
 		a.message = a.styles.Success.Render(fmt.Sprintf("Removed repository '%s' - refreshing...", msg.name))
 		a.err = nil
-		// Refresh registry without removed repo
+		// Refresh registry without removed repo (force to bypass cache)
 		a.registry = registry.NewRegistry(a.cfg)
 		a.loadingMsg = "Fetching skill index..."
 		a.mode = ModeLoading
 		return a, tea.Batch(
-			a.fetchIndex,
+			a.fetchIndexForced,
 			tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
 		)
 
@@ -480,11 +504,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.cfg.Save()
-		a.mode = ModeNormal
+		// Chain: show starter kit if no repos configured yet
+		if len(a.cfg.Repos) == 0 && !a.cfg.StarterKitDismissed {
+			a.initStarterKit()
+			a.mode = ModeStarterKit
+		} else {
+			a.mode = ModeNormal
+		}
 		return a, nil
 
 	case backendLinkErrMsg:
 		a.errorTitle = "Backend Link Failed"
+		a.errorDetail = msg.err.Error()
+		a.mode = ModeError
+		return a, nil
+
+	case starterKitDoneMsg:
+		a.message = a.styles.Success.Render(fmt.Sprintf("Added %d repository(ies) - refreshing...", msg.count))
+		a.err = nil
+		// Refresh registry with new repos (force to bypass cache)
+		a.registry = registry.NewRegistry(a.cfg)
+		a.loadingMsg = "Fetching skill index..."
+		a.mode = ModeLoading
+		return a, tea.Batch(
+			a.fetchIndexForced,
+			tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
+		)
+
+	case starterKitErrMsg:
+		a.errorTitle = "Starter Kit Failed"
 		a.errorDetail = msg.err.Error()
 		a.mode = ModeError
 		return a, nil
@@ -530,7 +578,6 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		if a.skills != nil && !a.skills.IsSearching() {
 			if skill := a.skills.Selected(); skill != nil {
-				_, tracked := a.manifest.GetInstalled(skill.Name)
 				onDisk := a.manifest.IsInstalled(skill.Name)
 				if !onDisk {
 					// Not on disk: install directly
@@ -541,14 +588,13 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						a.installSkill(skill),
 						tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
 					)
-				} else if !tracked {
-					// On disk but untracked: confirm overwrite
-					a.confirmAction = ConfirmOverwrite
-					a.confirmSkill = skill
-					a.confirmSel = 0
-					a.mode = ModeConfirm
-					return a, nil
 				}
+				// Already on disk (tracked or untracked): confirm overwrite
+				a.confirmAction = ConfirmOverwrite
+				a.confirmSkill = skill
+				a.confirmSel = 0
+				a.mode = ModeConfirm
+				return a, nil
 			}
 		}
 
@@ -584,7 +630,7 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-	case "a":
+	case "A":
 		if a.skills != nil && !a.skills.IsSearching() {
 			a.addRepoName.Reset()
 			a.addRepoURL.Reset()
@@ -620,6 +666,13 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				a.syncRepos(),
 				tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
 			)
+		}
+
+	case "K":
+		if a.skills != nil && !a.skills.IsSearching() {
+			a.initStarterKit()
+			a.mode = ModeStarterKit
+			return a, nil
 		}
 	}
 
@@ -741,7 +794,13 @@ func (a *App) updateBackendSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.cfg.Save()
-		a.mode = ModeNormal
+		// Chain: show starter kit if no repos configured yet
+		if len(a.cfg.Repos) == 0 && !a.cfg.StarterKitDismissed {
+			a.initStarterKit()
+			a.mode = ModeStarterKit
+		} else {
+			a.mode = ModeNormal
+		}
 		return a, nil
 
 	case "j", "down":
@@ -776,7 +835,13 @@ func (a *App) updateBackendSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if len(toLink) == 0 {
-			a.mode = ModeNormal
+			// Chain: show starter kit if no repos configured yet
+			if len(a.cfg.Repos) == 0 && !a.cfg.StarterKitDismissed {
+				a.initStarterKit()
+				a.mode = ModeStarterKit
+			} else {
+				a.mode = ModeNormal
+			}
 			return a, nil
 		}
 
@@ -1130,6 +1195,8 @@ func (a *App) View() string {
 		b.WriteString(a.overlayModal(a.renderPanels(), a.renderAddRepoContent()))
 	case ModeBackendSetup:
 		b.WriteString(a.overlayModal(a.renderPanels(), a.renderBackendSetupContent()))
+	case ModeStarterKit:
+		b.WriteString(a.overlayModal(a.renderPanels(), a.renderStarterKitContent()))
 	case ModeUpdateResult:
 		b.WriteString(a.overlayModal(a.renderPanels(), a.renderUpdateResultContent()))
 	case ModeError:
@@ -1566,6 +1633,195 @@ func (a *App) renderErrorContent() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+// Starter kit modal handling
+func (a *App) initStarterKit() {
+	// Remove starter kit repos from config that yielded no skills
+	a.pruneDeadStarterKitRepos()
+
+	a.starterKitSelection = make([]bool, len(config.StarterKitRepos))
+	// Pre-select repos not already in config
+	for i, repo := range config.StarterKitRepos {
+		a.starterKitSelection[i] = !a.hasRepo(repo.Name, repo.URL)
+	}
+	a.starterKitCursor = 0
+}
+
+// pruneDeadStarterKitRepos removes starter kit repos from config that have
+// no skills in the registry (i.e. their fetch failed).
+func (a *App) pruneDeadStarterKitRepos() {
+	if a.registry == nil {
+		return
+	}
+
+	// Build set of repo URLs that actually produced skills
+	activeURLs := make(map[string]bool)
+	for _, s := range a.registry.ListSkills() {
+		if s.Source.Repo != "" {
+			activeURLs[s.Source.Repo] = true
+		}
+	}
+
+	// Check which starter kit repos are dead
+	starterKitURLs := make(map[string]bool)
+	for _, sk := range config.StarterKitRepos {
+		starterKitURLs[sk.URL] = true
+	}
+
+	var valid []config.Repo
+	changed := false
+	for _, r := range a.cfg.Repos {
+		if starterKitURLs[r.URL] && !activeURLs[r.URL] {
+			// Starter kit repo with no skills — drop it
+			changed = true
+			continue
+		}
+		valid = append(valid, r)
+	}
+
+	if changed {
+		a.cfg.Repos = valid
+		a.cfg.Save()
+	}
+}
+
+// hasRepo checks if a repo is already configured (by name or URL)
+func (a *App) hasRepo(name, url string) bool {
+	for _, r := range a.cfg.Repos {
+		if r.Name == name || r.URL == url {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) updateStarterKit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		a.cfg.StarterKitDismissed = true
+		a.cfg.Save()
+		a.mode = ModeNormal
+		return a, nil
+
+	case "j", "down":
+		if a.starterKitCursor < len(config.StarterKitRepos)-1 {
+			a.starterKitCursor++
+		}
+		return a, nil
+
+	case "k", "up":
+		if a.starterKitCursor > 0 {
+			a.starterKitCursor--
+		}
+		return a, nil
+
+	case " ", "x":
+		if a.starterKitCursor < len(config.StarterKitRepos) {
+			repo := config.StarterKitRepos[a.starterKitCursor]
+			if !a.hasRepo(repo.Name, repo.URL) {
+				a.starterKitSelection[a.starterKitCursor] = !a.starterKitSelection[a.starterKitCursor]
+			}
+		}
+		return a, nil
+
+	case "enter":
+		var selected []config.Repo
+		for i, sel := range a.starterKitSelection {
+			if sel {
+				selected = append(selected, config.StarterKitRepos[i])
+			}
+		}
+
+		a.cfg.StarterKitDismissed = true
+		a.cfg.Save()
+
+		if len(selected) == 0 {
+			a.mode = ModeNormal
+			return a, nil
+		}
+
+		a.loadingMsg = "Adding repositories..."
+		a.mode = ModeLoading
+		return a, tea.Batch(
+			a.addStarterKitRepos(selected),
+			tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
+		)
+	}
+
+	return a, nil
+}
+
+func (a *App) addStarterKitRepos(repos []config.Repo) tea.Cmd {
+	return func() tea.Msg {
+		for _, r := range repos {
+			if err := a.cfg.AddRepo(r.Name, r.URL); err != nil {
+				return starterKitErrMsg{fmt.Errorf("failed to add %s: %w", r.Name, err)}
+			}
+		}
+		return starterKitDoneMsg{len(repos)}
+	}
+}
+
+func (a *App) renderStarterKitContent() string {
+	modalBg := lipgloss.Color("#1a1a2e")
+	contentWidth := 60
+
+	lineBg := lipgloss.NewStyle().
+		Background(modalBg).
+		Width(contentWidth)
+
+	titleStyled := a.styles.Title.Background(modalBg).Width(contentWidth).Render("Starter Kit Repositories")
+	emptyLine := lineBg.Render("")
+	descStyled := lineBg.Render("Add popular skill repositories to get started.")
+
+	var lines []string
+	lines = append(lines, titleStyled, emptyLine, descStyled, emptyLine)
+
+	for i, repo := range config.StarterKitRepos {
+		selected := i == a.starterKitCursor
+		alreadyAdded := a.hasRepo(repo.Name, repo.URL)
+
+		var line string
+		var suffix string
+
+		if alreadyAdded {
+			line = fmt.Sprintf("  [ ] %s", repo.Name)
+			suffix = "  ✓ added"
+		} else {
+			checkbox := " "
+			if a.starterKitSelection[i] {
+				checkbox = "x"
+			}
+			line = fmt.Sprintf("  [%s] %s", checkbox, repo.Name)
+		}
+
+		if selected && alreadyAdded {
+			dimCursorStyle := lipgloss.NewStyle().
+				Background(lipgloss.Color("#374151")).
+				Foreground(lipgloss.Color("#6B7280")).
+				Width(contentWidth)
+			lines = append(lines, dimCursorStyle.Render(line+suffix))
+		} else if selected {
+			cursorStyle := lipgloss.NewStyle().
+				Background(lipgloss.Color("#7C3AED")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Width(contentWidth).
+				Bold(true)
+			lines = append(lines, cursorStyle.Render(line))
+		} else if alreadyAdded {
+			styledLine := a.styles.Muted.Render(line) + a.styles.Success.Render(suffix)
+			lines = append(lines, lineBg.Render(styledLine))
+		} else {
+			lines = append(lines, lineBg.Render(line))
+		}
+	}
+
+	lines = append(lines, emptyLine)
+	helpStyled := a.styles.Muted.Background(modalBg).Width(contentWidth).Render("space: toggle  enter: add  esc: skip")
+	lines = append(lines, helpStyled)
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
 func (a *App) renderStatusBar() string {
 	var pairs []string
 
@@ -1594,6 +1850,13 @@ func (a *App) renderStatusBar() string {
 			"enter", "link",
 			"esc", "skip",
 		}
+	} else if a.mode == ModeStarterKit {
+		pairs = []string{
+			"j/k", "navigate",
+			"space", "toggle",
+			"enter", "add",
+			"esc", "skip",
+		}
 	} else if a.mode == ModeUpdateResult || a.mode == ModeError {
 		pairs = []string{
 			"enter", "close",
@@ -1603,11 +1866,14 @@ func (a *App) renderStatusBar() string {
 		pairs = []string{
 			"j/k", "navigate",
 			"h/l", "panels",
+			"z", "fold",
 			"i", "install",
 			"r", "remove",
-			"U", "update all",
+			"U", "update",
+			"A", "add repo",
 			"S", "sync",
 			"b", "backends",
+			"K", "starter kit",
 			"/", "search",
 			"q", "quit",
 		}

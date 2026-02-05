@@ -341,6 +341,15 @@ func (l *GroupedSkillList) ToggleGroup(name string) {
 	}
 
 	l.rebuildFlatList()
+
+	// Move cursor to the group's header so it stays on the folded group
+	for i, item := range l.flatItems {
+		if item.Type == ItemTypeHeader && item.HeaderName == name {
+			l.cursor = i
+			l.adjustOffset()
+			break
+		}
+	}
 }
 
 // View renders the grouped list

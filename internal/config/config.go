@@ -29,6 +29,18 @@ type Backend struct {
 	Linked      bool   `toml:"-"`           // Runtime: is symlink active?
 }
 
+// StarterKitRepos are popular skill repositories offered on first run
+var StarterKitRepos = []Repo{
+	{Name: "anthropic-official", URL: "https://github.com/anthropics/skills"},
+	{Name: "vercel-official", URL: "https://github.com/vercel-labs/agent-skills"},
+	{Name: "context-engineering", URL: "https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering"},
+	{Name: "antigravity", URL: "https://github.com/sickn33/antigravity-awesome-skills"},
+	{Name: "ai-research", URL: "https://github.com/Orchestra-Research/AI-research-SKILLs"},
+	{Name: "claude-skills", URL: "https://github.com/alirezarezvani/claude-skills"},
+	{Name: "skillcreator", URL: "https://github.com/skillcreatorai/Ai-Agent-Skills"},
+	{Name: "microsoft-official", URL: "https://github.com/microsoft/agent-skills"},
+}
+
 // KnownBackends are the built-in supported backends
 var KnownBackends = []Backend{
 	{Name: "claude", Path: "~/.claude/skills", Description: "Claude Code"},
@@ -44,23 +56,25 @@ var KnownBackends = []Backend{
 
 // ConfigFile represents the TOML config file structure
 type ConfigFile struct {
-	Repos             []Repo    `toml:"repos"`
-	CacheTTL          int       `toml:"cache_ttl_hours,omitempty"`
-	Backends          []Backend `toml:"backends,omitempty"`
-	DismissedBackends []string  `toml:"dismissed_backends,omitempty"`
+	Repos               []Repo    `toml:"repos"`
+	CacheTTL            int       `toml:"cache_ttl_hours,omitempty"`
+	Backends            []Backend `toml:"backends,omitempty"`
+	DismissedBackends   []string  `toml:"dismissed_backends,omitempty"`
+	StarterKitDismissed bool      `toml:"starter_kit_dismissed,omitempty"`
 }
 
 // Config holds the runtime configuration
 type Config struct {
-	ConfigDir         string
-	ConfigPath        string
-	ManifestPath      string
-	CachePath         string
-	SkillsDir         string // Always ~/.lazyas/skills/ - the central skills directory
-	Repos             []Repo
-	CacheTTL          int
-	Backends          []Backend // Configured backends (symlink targets)
-	DismissedBackends []string  // Backend names dismissed from auto-show
+	ConfigDir           string
+	ConfigPath          string
+	ManifestPath        string
+	CachePath           string
+	SkillsDir           string // Always ~/.lazyas/skills/ - the central skills directory
+	Repos               []Repo
+	CacheTTL            int
+	Backends            []Backend // Configured backends (symlink targets)
+	DismissedBackends   []string  // Backend names dismissed from auto-show
+	StarterKitDismissed bool      // Whether starter kit modal was dismissed
 }
 
 // xdgConfigHome returns $XDG_CONFIG_HOME, falling back to ~/.config per spec.
@@ -148,6 +162,7 @@ func (c *Config) Load() error {
 	}
 
 	c.DismissedBackends = cf.DismissedBackends
+	c.StarterKitDismissed = cf.StarterKitDismissed
 
 	return nil
 }
@@ -180,9 +195,10 @@ func (c *Config) Save() error {
 	}
 
 	cf := ConfigFile{
-		Repos:             c.Repos,
-		CacheTTL:          c.CacheTTL,
-		DismissedBackends: c.DismissedBackends,
+		Repos:               c.Repos,
+		CacheTTL:            c.CacheTTL,
+		DismissedBackends:   c.DismissedBackends,
+		StarterKitDismissed: c.StarterKitDismissed,
 	}
 
 	// Only save backends that differ from known backends or are custom

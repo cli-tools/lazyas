@@ -172,6 +172,27 @@ description = "Internal AI tool"
 
 Built-in backends (claude, codex, gemini, cursor, copilot, amp, goose, opencode, vibe) are configured automatically. Custom backends can be added via `lazyas backend add` or the config file.
 
+## Popular Skill Repositories
+
+These repositories contain Agent Skills that can be added as lazyas registry sources:
+
+```bash
+lazyas config repo add <name> <url>
+```
+
+| Repository | Stars | Skills | Description |
+|---|---|---|---|
+| [anthropics/skills](https://github.com/anthropics/skills) | 63k | 17 | Anthropic's official skills - webapp testing, canvas design, document generation |
+| [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) | 19k | 5 | Vercel's official collection - React best practices, web design, deploy |
+| [muratcankoylan/Agent-Skills-for-Context-Engineering](https://github.com/muratcankoylan/Agent-Skills-for-Context-Engineering) | 8k | 19 | Context engineering, multi-agent architectures, memory management |
+| [sickn33/antigravity-awesome-skills](https://github.com/sickn33/antigravity-awesome-skills) | 7k | 600+ | Largest collection - security, React, autonomous coding, and more |
+| [Orchestra-Research/AI-research-SKILLs](https://github.com/Orchestra-Research/AI-research-SKILLs) | 2.3k | 82 | AI research & engineering - ML, NLP, computer vision, scientific computing |
+| [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | 1.6k | 42 | Practical Claude workflows, subagents, and commands |
+| [skillcreatorai/Ai-Agent-Skills](https://github.com/skillcreatorai/Ai-Agent-Skills) | 716 | 47 | General purpose skills from the skillcreator.ai ecosystem |
+| [microsoft/agent-skills](https://github.com/microsoft/agent-skills) | 542 | 133 | Azure, Cosmos DB, SDKs - Microsoft ecosystem skills |
+
+Repos without an `index.yaml` are auto-scanned for `SKILL.md` files during sync.
+
 ## Registry Format
 
 The registry is a git repository containing an `index.yaml`:
