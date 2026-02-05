@@ -578,20 +578,33 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		if a.skills != nil && !a.skills.IsSearching() {
 			if skill := a.skills.Selected(); skill != nil {
-				onDisk := a.manifest.IsInstalled(skill.Name)
+				// If source is a local path, resolve from registry
+				installSkill := skill
+				if strings.HasPrefix(skill.Source.Repo, "/") || strings.HasPrefix(skill.Source.Repo, "~") {
+					regSkill := a.registry.GetSkill(skill.Name)
+					if regSkill == nil {
+						a.errorTitle = "Cannot Install"
+						a.errorDetail = fmt.Sprintf("%s is not found in any configured registry", skill.Name)
+						a.mode = ModeError
+						return a, nil
+					}
+					installSkill = regSkill
+				}
+
+				onDisk := a.manifest.IsInstalled(installSkill.Name)
 				if !onDisk {
 					// Not on disk: install directly
-					a.confirmSkill = skill
-					a.loadingMsg = fmt.Sprintf("Installing %s...", skill.Name)
+					a.confirmSkill = installSkill
+					a.loadingMsg = fmt.Sprintf("Installing %s...", installSkill.Name)
 					a.mode = ModeLoading
 					return a, tea.Batch(
-						a.installSkill(skill),
+						a.installSkill(installSkill),
 						tea.Tick(100*time.Millisecond, func(_ time.Time) tea.Msg { return tickMsg{} }),
 					)
 				}
 				// Already on disk (tracked or untracked): confirm overwrite
 				a.confirmAction = ConfirmOverwrite
-				a.confirmSkill = skill
+				a.confirmSkill = installSkill
 				a.confirmSel = 0
 				a.mode = ModeConfirm
 				return a, nil
@@ -985,8 +998,13 @@ func (a *App) installSkill(skill *registry.SkillEntry) tea.Cmd {
 func (a *App) overwriteAndInstall(skill *registry.SkillEntry) tea.Cmd {
 	return func() tea.Msg {
 		targetDir := a.manifest.GetSkillPath(skill.Name)
-		// Remove the existing local copy
-		os.RemoveAll(targetDir)
+		backupDir := targetDir + ".lazyas-backup"
+
+		// Move existing directory to backup
+		if err := os.Rename(targetDir, backupDir); err != nil {
+			return installErrMsg{fmt.Errorf("failed to backup existing skill: %w", err)}
+		}
+
 		// Install from registry
 		result, err := git.Clone(git.CloneOptions{
 			Repo:      skill.Source.Repo,
@@ -995,12 +1013,20 @@ func (a *App) overwriteAndInstall(skill *registry.SkillEntry) tea.Cmd {
 			TargetDir: targetDir,
 		})
 		if err != nil {
+			// Restore backup on clone failure
+			os.Rename(backupDir, targetDir)
 			return installErrMsg{err}
 		}
 		if err := git.ValidateSkill(targetDir); err != nil {
 			os.RemoveAll(targetDir)
+			// Restore backup on validation failure
+			os.Rename(backupDir, targetDir)
 			return installErrMsg{err}
 		}
+
+		// Success: remove backup
+		os.RemoveAll(backupDir)
+
 		if err := a.manifest.AddSkill(
 			skill.Name,
 			skill.Source.Tag,
