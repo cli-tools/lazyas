@@ -113,10 +113,12 @@ lazyas config repo list
 
 ```
 ~/.lazyas/
-├── skills/              # THE actual skills directory (lazyas manages this)
-│   ├── my-skill/
-│   ├── helper-skill/
+├── skills/              # Symlinks into repo worktrees
+│   ├── my-skill → repos/anthropics-skills/skills/my-skill
+│   ├── helper-skill → repos/anthropics-skills/skills/helper-skill
 │   └── ...
+├── repos/               # Per-repo sparse clones
+│   └── anthropics-skills/
 ├── config.toml          # Configuration
 ├── manifest.yaml        # Installed skills tracking
 └── cache.yaml           # Registry cache
@@ -151,7 +153,7 @@ internal/
 ├── config/                 # Configuration (backends, repos)
 ├── symlink/                # Symlink management for backends
 ├── skillmd/                # Shared SKILL.md parsing helpers
-├── git/                    # Git clone operations
+├── git/                    # Git operations (repo clones, sparse checkout)
 └── cli/                    # Cobra CLI commands
 ```
 

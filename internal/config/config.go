@@ -70,6 +70,7 @@ type Config struct {
 	ManifestPath        string
 	CachePath           string
 	SkillsDir           string // Always ~/.lazyas/skills/ - the central skills directory
+	ReposDir            string // Always ~/.lazyas/repos/ - per-repo sparse clones
 	Repos               []Repo
 	CacheTTL            int
 	Backends            []Backend // Configured backends (symlink targets)
@@ -119,6 +120,7 @@ func DefaultConfig() (*Config, error) {
 	// Central lazyas directory is ~/.lazyas/
 	configDir := filepath.Join(home, ".lazyas")
 	skillsDir := filepath.Join(configDir, "skills")
+	reposDir := filepath.Join(configDir, "repos")
 
 	// Initialize default backends from KnownBackends
 	backends := make([]Backend, len(KnownBackends))
@@ -130,6 +132,7 @@ func DefaultConfig() (*Config, error) {
 		ManifestPath: filepath.Join(configDir, ManifestFileName),
 		CachePath:    filepath.Join(configDir, CacheFileName),
 		SkillsDir:    skillsDir,
+		ReposDir:     reposDir,
 		CacheTTL:     DefaultCacheTTLHours,
 		Repos:        []Repo{},
 		Backends:     backends,
@@ -243,7 +246,10 @@ func (c *Config) EnsureDirs() error {
 	if err := os.MkdirAll(c.ConfigDir, 0755); err != nil {
 		return err
 	}
-	return os.MkdirAll(c.SkillsDir, 0755)
+	if err := os.MkdirAll(c.SkillsDir, 0755); err != nil {
+		return err
+	}
+	return os.MkdirAll(c.ReposDir, 0755)
 }
 
 // AddRepo adds a new repository to the config
@@ -275,6 +281,16 @@ func (c *Config) GetBackend(name string) *Backend {
 	for i := range c.Backends {
 		if c.Backends[i].Name == name {
 			return &c.Backends[i]
+		}
+	}
+	return nil
+}
+
+// GetRepo returns a repo by name
+func (c *Config) GetRepo(name string) *Repo {
+	for i := range c.Repos {
+		if c.Repos[i].Name == name {
+			return &c.Repos[i]
 		}
 	}
 	return nil

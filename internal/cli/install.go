@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -103,22 +104,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("...")
 
-	// Clone skill
-	targetDir := mfst.GetSkillPath(name)
-	result, err := git.Clone(git.CloneOptions{
-		Repo:      skill.Source.Repo,
+	// Install via per-repo sparse clone
+	repoDir := filepath.Join(cfg.ReposDir, git.RepoDirName(skill.Source.Repo))
+	skillLink := mfst.GetSkillPath(name)
+
+	result, err := git.RepoInstall(git.RepoInstallOptions{
+		RepoURL:   skill.Source.Repo,
 		Path:      skill.Source.Path,
-		Tag:       skillVersion,
-		TargetDir: targetDir,
+		RepoDir:   repoDir,
+		SkillName: name,
+		SkillLink: skillLink,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to clone skill: %w", err)
-	}
-
-	// Validate skill
-	if err := git.ValidateSkill(targetDir); err != nil {
-		os.RemoveAll(targetDir)
-		return fmt.Errorf("skill validation failed: %w", err)
+		return fmt.Errorf("failed to install skill: %w", err)
 	}
 
 	// Update manifest

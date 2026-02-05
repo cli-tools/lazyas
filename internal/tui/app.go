@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -964,20 +965,17 @@ func (a *App) refreshPanels() {
 
 func (a *App) installSkill(skill *registry.SkillEntry) tea.Cmd {
 	return func() tea.Msg {
-		targetDir := a.manifest.GetSkillPath(skill.Name)
+		repoDir := filepath.Join(a.cfg.ReposDir, git.RepoDirName(skill.Source.Repo))
+		skillLink := a.manifest.GetSkillPath(skill.Name)
 
-		result, err := git.Clone(git.CloneOptions{
-			Repo:      skill.Source.Repo,
+		result, err := git.RepoInstall(git.RepoInstallOptions{
+			RepoURL:   skill.Source.Repo,
 			Path:      skill.Source.Path,
-			Tag:       skill.Source.Tag,
-			TargetDir: targetDir,
+			RepoDir:   repoDir,
+			SkillName: skill.Name,
+			SkillLink: skillLink,
 		})
 		if err != nil {
-			return installErrMsg{err}
-		}
-
-		if err := git.ValidateSkill(targetDir); err != nil {
-			os.RemoveAll(targetDir)
 			return installErrMsg{err}
 		}
 
@@ -997,30 +995,26 @@ func (a *App) installSkill(skill *registry.SkillEntry) tea.Cmd {
 
 func (a *App) overwriteAndInstall(skill *registry.SkillEntry) tea.Cmd {
 	return func() tea.Msg {
-		targetDir := a.manifest.GetSkillPath(skill.Name)
-		backupDir := targetDir + ".lazyas-backup"
+		skillLink := a.manifest.GetSkillPath(skill.Name)
+		backupDir := skillLink + ".lazyas-backup"
 
-		// Move existing directory to backup
-		if err := os.Rename(targetDir, backupDir); err != nil {
+		// Move existing item (directory or symlink target) to backup
+		if err := os.Rename(skillLink, backupDir); err != nil {
 			return installErrMsg{fmt.Errorf("failed to backup existing skill: %w", err)}
 		}
 
-		// Install from registry
-		result, err := git.Clone(git.CloneOptions{
-			Repo:      skill.Source.Repo,
+		// Install via repo sparse checkout
+		repoDir := filepath.Join(a.cfg.ReposDir, git.RepoDirName(skill.Source.Repo))
+		result, err := git.RepoInstall(git.RepoInstallOptions{
+			RepoURL:   skill.Source.Repo,
 			Path:      skill.Source.Path,
-			Tag:       skill.Source.Tag,
-			TargetDir: targetDir,
+			RepoDir:   repoDir,
+			SkillName: skill.Name,
+			SkillLink: skillLink,
 		})
 		if err != nil {
-			// Restore backup on clone failure
-			os.Rename(backupDir, targetDir)
-			return installErrMsg{err}
-		}
-		if err := git.ValidateSkill(targetDir); err != nil {
-			os.RemoveAll(targetDir)
-			// Restore backup on validation failure
-			os.Rename(backupDir, targetDir)
+			// Restore backup on failure
+			os.Rename(backupDir, skillLink)
 			return installErrMsg{err}
 		}
 
@@ -1108,55 +1102,26 @@ func (a *App) updateAllSkills() tea.Cmd {
 				targetTag = skill.Source.Tag
 			}
 
-			// Check if it's a sparse checkout
-			gitDir := skillPath + "/.git"
-			if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-				if skill == nil {
-					results = append(results, updateSkillResult{name, "skipped"})
-					skipped++
-					continue
-				}
+			result, err := git.Update(skillPath, targetTag)
+			if err != nil {
+				results = append(results, updateSkillResult{name, "failed"})
+				failed++
+				continue
+			}
 
-				// Remove and re-clone for sparse checkouts
-				os.RemoveAll(skillPath)
-				result, err := git.Clone(git.CloneOptions{
-					Repo:      skill.Source.Repo,
-					Path:      skill.Source.Path,
-					Tag:       targetTag,
-					TargetDir: skillPath,
-				})
-				if err != nil {
-					results = append(results, updateSkillResult{name, "failed"})
-					failed++
-					continue
+			if result.Commit != info.Commit {
+				sourceRepo := info.SourceRepo
+				sourcePath := info.SourcePath
+				if skill != nil {
+					sourceRepo = skill.Source.Repo
+					sourcePath = skill.Source.Path
 				}
-
-				a.manifest.AddSkill(name, targetTag, result.Commit, skill.Source.Repo, skill.Source.Path)
+				a.manifest.AddSkill(name, targetTag, result.Commit, sourceRepo, sourcePath)
 				results = append(results, updateSkillResult{name, "updated"})
 				updated++
 			} else {
-				// Regular git update
-				result, err := git.Update(skillPath, targetTag)
-				if err != nil {
-					results = append(results, updateSkillResult{name, "failed"})
-					failed++
-					continue
-				}
-
-				if result.Commit != info.Commit {
-					sourceRepo := info.SourceRepo
-					sourcePath := info.SourcePath
-					if skill != nil {
-						sourceRepo = skill.Source.Repo
-						sourcePath = skill.Source.Path
-					}
-					a.manifest.AddSkill(name, targetTag, result.Commit, sourceRepo, sourcePath)
-					results = append(results, updateSkillResult{name, "updated"})
-					updated++
-				} else {
-					results = append(results, updateSkillResult{name, "up-to-date"})
-					skipped++
-				}
+				results = append(results, updateSkillResult{name, "up-to-date"})
+				skipped++
 			}
 		}
 

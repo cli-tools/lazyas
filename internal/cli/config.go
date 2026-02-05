@@ -26,7 +26,7 @@ var repoAddCmd = &cobra.Command{
 	Long: `Add a skill repository to fetch skills from.
 
 Examples:
-  lazyas config repo add official https://github.com/anthropics/claude-skills-index
+  lazyas config repo add official https://github.com/anthropics/skills
   lazyas config repo add mycompany https://github.com/mycompany/skills`,
 	Args: cobra.ExactArgs(2),
 	RunE: runRepoAdd,

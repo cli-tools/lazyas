@@ -138,16 +138,19 @@ func (m *Manager) ScanLocalSkills() map[string]LocalSkill {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
 		// Skip the .lazyas directory
 		if entry.Name() == ".lazyas" {
 			continue
 		}
 
 		skillPath := filepath.Join(m.cfg.SkillsDir, entry.Name())
+
+		// Follow symlinks: DirEntry.IsDir() returns false for symlinks,
+		// so use os.Stat which follows symlinks to check the target.
+		info, err := os.Stat(skillPath)
+		if err != nil || !info.IsDir() {
+			continue
+		}
 		skillMdPath := filepath.Join(skillPath, "SKILL.md")
 
 		if _, err := os.Stat(skillMdPath); err == nil {
@@ -177,14 +180,12 @@ func (m *Manager) ScanLocalSkills() map[string]LocalSkill {
 	return result
 }
 
-// isGitRepository checks if a path contains a .git directory
+// isGitRepository checks if a path is inside a git repository.
+// Accepts both .git directories and .git files (gitlinks).
 func isGitRepository(path string) bool {
 	gitPath := filepath.Join(path, ".git")
-	info, err := os.Stat(gitPath)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
+	_, err := os.Stat(gitPath)
+	return err == nil
 }
 
 // hasLocalModifications checks if a git repo has uncommitted changes
