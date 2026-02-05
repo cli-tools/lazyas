@@ -566,6 +566,20 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+	case "tab":
+		if a.skills != nil && !a.skills.IsSearching() {
+			if a.layout.Focus() == layout.PanelLeft {
+				a.layout.FocusRight()
+				a.skills.SetFocused(false)
+				a.detail.SetFocused(true)
+			} else {
+				a.layout.FocusLeft()
+				a.skills.SetFocused(true)
+				a.detail.SetFocused(false)
+			}
+			return a, nil
+		}
+
 	case "h", "left":
 		if a.skills != nil && !a.skills.IsSearching() {
 			a.layout.FocusLeft()
@@ -1875,7 +1889,7 @@ func (a *App) renderStatusBar() string {
 		} else {
 			pairs = []string{
 				"j/k", "navigate",
-				"h/l", "panels",
+				"tab", "panels",
 				"z", "fold",
 				"i", "install",
 				"r", "remove",

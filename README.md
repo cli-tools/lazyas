@@ -46,16 +46,16 @@ The interface features a two-panel layout:
 
 Key bindings:
 - `j/k` or `↑/↓` - Navigate up/down in current panel
-- `h/l` or `←/→` - Switch focus between panels
+- `Tab` or `h/l` - Switch focus between panels
 - `[/]` - Switch tabs in detail panel
-- `z` or `Tab` - Collapse/expand group
+- `z` - Collapse/expand group
 - `i` - Install selected skill
 - `r` - Remove selected skill
 - `U` - Update all installed skills
 - `S` - Sync repositories (force refresh)
 - `b` - Backend management
 - `/` - Search skills
-- `c` - Clear search
+- `Esc` - Clear search
 - `a` - Add repository
 - `q` - Quit
 

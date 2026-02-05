@@ -364,7 +364,7 @@ func (p *SkillsPanel) Update(msg tea.Msg) tea.Cmd {
 			p.moveToTop()
 		case key.Matches(msg, km.Bottom):
 			p.moveToBottom()
-		case msg.String() == "z" || msg.String() == "tab":
+		case msg.String() == "z":
 			p.toggleCurrentGroup()
 		case msg.String() == "/":
 			p.searching = true
