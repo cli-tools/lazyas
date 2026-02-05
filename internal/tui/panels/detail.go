@@ -23,15 +23,16 @@ const (
 
 // DetailPanel displays skill details with tabs
 type DetailPanel struct {
-	skill     *registry.SkillEntry
-	installed *manifest.InstalledSkill
-	localInfo *manifest.LocalSkill
-	tab       Tab
-	height    int
-	width     int
-	focused   bool
-	viewport  viewport.Model
-	skillMD   string
+	skill        *registry.SkillEntry
+	installed    *manifest.InstalledSkill
+	localInfo    *manifest.LocalSkill
+	tab          Tab
+	height       int
+	width        int
+	focused      bool
+	viewport     viewport.Model
+	infoViewport viewport.Model
+	skillMD      string
 
 	// Styles
 	styles DetailPanelStyles
@@ -93,12 +94,14 @@ func DefaultDetailPanelStyles() DetailPanelStyles {
 // NewDetailPanel creates a new detail panel
 func NewDetailPanel() *DetailPanel {
 	vp := viewport.New(80, 20)
+	ivp := viewport.New(80, 20)
 	return &DetailPanel{
-		tab:      TabInfo,
-		styles:   DefaultDetailPanelStyles(),
-		viewport: vp,
-		height:   24,
-		width:    60,
+		tab:          TabInfo,
+		styles:       DefaultDetailPanelStyles(),
+		viewport:     vp,
+		infoViewport: ivp,
+		height:       24,
+		width:        60,
 	}
 }
 
@@ -117,7 +120,11 @@ func (p *DetailPanel) SetSkill(skill *registry.SkillEntry, installed *manifest.I
 		}
 	}
 
-	// Update viewport content if on SKILL.md tab
+	// Update viewport content
+	if skill != nil {
+		p.infoViewport.SetContent(p.renderInfo())
+		p.infoViewport.GotoTop()
+	}
 	if p.tab == TabSkillMD {
 		p.viewport.SetContent(p.skillMD)
 	}
@@ -129,6 +136,8 @@ func (p *DetailPanel) SetSize(width, height int) {
 	p.height = height
 	p.viewport.Width = width - 4
 	p.viewport.Height = height - 8 // Account for tabs and padding
+	p.infoViewport.Width = width - 4
+	p.infoViewport.Height = height - 8
 }
 
 // SetFocused sets whether the panel is focused
@@ -168,10 +177,6 @@ func (p *DetailPanel) Update(msg tea.Msg) tea.Cmd {
 		case key.Matches(msg, km.PrevTab):
 			if p.tab > 0 {
 				p.tab--
-				if p.tab == TabSkillMD {
-					p.viewport.SetContent(p.skillMD)
-					p.viewport.GotoTop()
-				}
 			}
 		case key.Matches(msg, km.NextTab):
 			if p.tab < TabSkillMD {
@@ -182,7 +187,12 @@ func (p *DetailPanel) Update(msg tea.Msg) tea.Cmd {
 				}
 			}
 		case key.Matches(msg, km.Up), key.Matches(msg, km.Down):
-			if p.tab == TabSkillMD {
+			switch p.tab {
+			case TabInfo:
+				var cmd tea.Cmd
+				p.infoViewport, cmd = p.infoViewport.Update(msg)
+				return cmd
+			case TabSkillMD:
 				var cmd tea.Cmd
 				p.viewport, cmd = p.viewport.Update(msg)
 				return cmd
@@ -207,7 +217,7 @@ func (p *DetailPanel) View() string {
 	// Content based on tab
 	switch p.tab {
 	case TabInfo:
-		b.WriteString(p.renderInfo())
+		b.WriteString(p.infoViewport.View())
 	case TabSkillMD:
 		b.WriteString(p.renderSkillMD())
 	}
@@ -233,31 +243,31 @@ func (p *DetailPanel) renderTabs() string {
 func (p *DetailPanel) renderInfo() string {
 	var b strings.Builder
 
-	// Title
+	// Title + status badge on same line
 	title := p.skill.Name
 	if p.skill.Source.Tag != "" {
 		title += "@" + p.skill.Source.Tag
 	}
 	b.WriteString(p.styles.Title.Render(title))
-	b.WriteString("\n\n")
 
-	// Status badge
 	isUntracked := p.localInfo != nil && p.installed == nil
 	if p.localInfo != nil {
+		b.WriteString("  ")
 		if p.localInfo.IsModified {
 			b.WriteString(p.styles.BadgeModified.Render("● MODIFIED"))
 		} else {
 			b.WriteString(p.styles.Badge.Render("● INSTALLED"))
 		}
 		if p.installed != nil {
-			b.WriteString(p.styles.Muted.Render(" (commit: " + truncate(p.installed.Commit, 7) + ")"))
+			b.WriteString(p.styles.Muted.Render(" " + truncate(p.installed.Commit, 7)))
 		} else {
 			b.WriteString(p.styles.Muted.Render(" (untracked)"))
 		}
 	} else {
+		b.WriteString("  ")
 		b.WriteString(p.styles.Muted.Render("○ Not installed"))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	if isUntracked {
 		// Untracked skill: show local path, not registry source info
@@ -313,11 +323,8 @@ func (p *DetailPanel) renderInfo() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
-
 	// Description (last, since it can be multi-line)
 	if p.skill.Description != "" {
-		b.WriteString(p.styles.Label.Render("Description"))
 		b.WriteString("\n")
 		b.WriteString(wordWrap(p.skill.Description, p.width-4))
 	}

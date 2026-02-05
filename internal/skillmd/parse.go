@@ -1,10 +1,14 @@
 package skillmd
 
-// ExtractDescription extracts a brief description from SKILL.md content.
+// ExtractDescription extracts the description from SKILL.md content.
+// It returns the full first paragraph of body text, or the frontmatter
+// description field if present.
 func ExtractDescription(content string) string {
 	lines := SplitLines(content)
 	inFrontmatter := false
 	frontmatterCount := 0
+
+	var para []string
 
 	for _, line := range lines {
 		trimmed := TrimSpace(line)
@@ -27,15 +31,8 @@ func ExtractDescription(content string) string {
 				if len(desc) >= 2 && (desc[0] == '"' || desc[0] == '\'') {
 					desc = desc[1 : len(desc)-1]
 				}
-				if len(desc) > 100 {
-					return desc[:97] + "..."
-				}
 				return desc
 			}
-			continue
-		}
-
-		if trimmed == "" {
 			continue
 		}
 
@@ -52,13 +49,25 @@ func ExtractDescription(content string) string {
 			continue
 		}
 
-		// Return first content line (truncated)
-		if len(trimmed) > 100 {
-			return trimmed[:97] + "..."
+		// Collect contiguous non-empty lines as first paragraph
+		if trimmed == "" {
+			if len(para) > 0 {
+				break
+			}
+			continue
 		}
-		return trimmed
+
+		para = append(para, trimmed)
 	}
-	return ""
+
+	result := ""
+	for i, line := range para {
+		if i > 0 {
+			result += " "
+		}
+		result += line
+	}
+	return result
 }
 
 // SplitLines splits a string into lines on newline boundaries.

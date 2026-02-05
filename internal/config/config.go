@@ -58,6 +58,7 @@ var KnownBackends = []Backend{
 type ConfigFile struct {
 	Repos               []Repo    `toml:"repos"`
 	CacheTTL            int       `toml:"cache_ttl_hours,omitempty"`
+	Viewer              string    `toml:"viewer,omitempty"`
 	Backends            []Backend `toml:"backends,omitempty"`
 	DismissedBackends   []string  `toml:"dismissed_backends,omitempty"`
 	StarterKitDismissed bool      `toml:"starter_kit_dismissed,omitempty"`
@@ -73,6 +74,7 @@ type Config struct {
 	ReposDir            string // Always ~/.lazyas/repos/ - per-repo sparse clones
 	Repos               []Repo
 	CacheTTL            int
+	Viewer              string    // Command to view SKILL.md (e.g. "glow -t"); empty = auto-detect
 	Backends            []Backend // Configured backends (symlink targets)
 	DismissedBackends   []string  // Backend names dismissed from auto-show
 	StarterKitDismissed bool      // Whether starter kit modal was dismissed
@@ -164,6 +166,7 @@ func (c *Config) Load() error {
 		c.Backends = mergeBackends(KnownBackends, cf.Backends)
 	}
 
+	c.Viewer = cf.Viewer
 	c.DismissedBackends = cf.DismissedBackends
 	c.StarterKitDismissed = cf.StarterKitDismissed
 
@@ -200,6 +203,7 @@ func (c *Config) Save() error {
 	cf := ConfigFile{
 		Repos:               c.Repos,
 		CacheTTL:            c.CacheTTL,
+		Viewer:              c.Viewer,
 		DismissedBackends:   c.DismissedBackends,
 		StarterKitDismissed: c.StarterKitDismissed,
 	}

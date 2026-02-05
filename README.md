@@ -51,6 +51,7 @@ Key bindings:
 - `z` - Collapse/expand group
 - `i` - Install selected skill
 - `r` - Remove selected skill
+- `V` - View SKILL.md in external viewer (glow/pager)
 - `U` - Update all installed skills
 - `S` - Sync repositories (force refresh)
 - `b` - Backend management
@@ -170,6 +171,10 @@ url = "https://github.com/example/skills-index"
 name = "work-tool"
 path = "~/work/.ai/skills"
 description = "Internal AI tool"
+
+# External viewer for SKILL.md (V key)
+# Default: glow -t > $PAGER > less
+viewer = "glow -t"
 ```
 
 Built-in backends (claude, codex, gemini, cursor, copilot, amp, goose, opencode, vibe) are configured automatically. Custom backends can be added via `lazyas backend add` or the config file.

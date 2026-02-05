@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -219,6 +220,7 @@ type (
 	starterKitDoneMsg  struct{ count int }
 	starterKitErrMsg   struct{ err error }
 	tickMsg            struct{}
+	glowDoneMsg        struct{ err error }
 )
 
 type updateSkillResult struct {
@@ -414,6 +416,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Initialize panels with local skills only
 		a.initPanels()
 		a.checkBackendStatus()
+		return a, nil
+
+	case glowDoneMsg:
+		// Returned from glow viewer, nothing to do
 		return a, nil
 
 	case installDoneMsg:
@@ -653,6 +659,21 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					a.confirmSel = 0
 					a.mode = ModeConfirm
 					return a, nil
+				}
+			}
+		}
+
+	case "V":
+		if a.skills != nil && !a.skills.IsSearching() {
+			if skill := a.skills.Selected(); skill != nil {
+				mdPath := filepath.Join(a.cfg.SkillsDir, skill.Name, "SKILL.md")
+				if _, err := os.Stat(mdPath); err == nil {
+					cmd := a.viewerCmd(mdPath)
+					if cmd != nil {
+						return a, tea.ExecProcess(cmd, func(err error) tea.Msg {
+							return glowDoneMsg{err}
+						})
+					}
 				}
 			}
 		}
@@ -1071,6 +1092,29 @@ func (a *App) removeSkill(skill *registry.SkillEntry) tea.Cmd {
 
 		return removeDoneMsg{skill.Name}
 	}
+}
+
+// viewerCmd returns an exec.Cmd for viewing a file.
+// If config.Viewer is set, use that command directly.
+// Otherwise fall back to glow -t, then $PAGER, then less.
+func (a *App) viewerCmd(path string) *exec.Cmd {
+	if a.cfg.Viewer != "" {
+		args := strings.Fields(a.cfg.Viewer)
+		args = append(args, path)
+		return exec.Command(args[0], args[1:]...)
+	}
+	if p, err := exec.LookPath("glow"); err == nil {
+		return exec.Command(p, "-t", path)
+	}
+	if pager := os.Getenv("PAGER"); pager != "" {
+		args := strings.Fields(pager)
+		args = append(args, path)
+		return exec.Command(args[0], args[1:]...)
+	}
+	if p, err := exec.LookPath("less"); err == nil {
+		return exec.Command(p, path)
+	}
+	return nil
 }
 
 func (a *App) syncRepos() tea.Cmd {
@@ -1893,6 +1937,7 @@ func (a *App) renderStatusBar() string {
 				"z", "fold",
 				"i", "install",
 				"r", "remove",
+				"V", "view SKILL.md",
 				"U", "update",
 				"A", "add repo",
 				"S", "sync",
