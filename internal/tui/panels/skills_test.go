@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"lazyas/internal/registry"
 )
 
@@ -127,5 +128,147 @@ func TestSkillsPanel_ScrollShowsAllItems(t *testing.T) {
 		if !found {
 			t.Errorf("skill %q was never visible while scrolling", s.Name)
 		}
+	}
+}
+
+func TestSkillsPanel_PageDown(t *testing.T) {
+	skills := makeSkills(20)
+	installed := map[string]string{}
+	modified := map[string]bool{}
+
+	p := NewSkillsPanel(skills, installed, modified)
+	p.SetSize(60, 10) // half-page jump = 5
+
+	if p.cursor != 0 {
+		t.Fatalf("expected initial cursor=0, got %d", p.cursor)
+	}
+
+	p.movePageDown()
+	if p.cursor != 5 {
+		t.Errorf("after first page down, expected cursor=5, got %d", p.cursor)
+	}
+
+	p.movePageDown()
+	if p.cursor != 10 {
+		t.Errorf("after second page down, expected cursor=10, got %d", p.cursor)
+	}
+
+	for i := 0; i < 20; i++ {
+		p.movePageDown()
+	}
+	if p.cursor != len(p.flatItems)-1 {
+		t.Errorf("page down should clamp at last item, expected %d, got %d", len(p.flatItems)-1, p.cursor)
+	}
+}
+
+func TestSkillsPanel_PageUp(t *testing.T) {
+	skills := makeSkills(20)
+	installed := map[string]string{}
+	modified := map[string]bool{}
+
+	p := NewSkillsPanel(skills, installed, modified)
+	p.SetSize(60, 10) // half-page jump = 5
+	p.moveToBottom()
+	bottomCursor := p.cursor
+
+	p.movePageUp()
+	expected := bottomCursor - 5
+	if p.cursor != expected {
+		t.Errorf("after first page up, expected cursor=%d, got %d", expected, p.cursor)
+	}
+
+	for i := 0; i < 20; i++ {
+		p.movePageUp()
+	}
+	if p.cursor != 0 {
+		t.Errorf("page up should clamp at 0, got %d", p.cursor)
+	}
+}
+
+func TestSkillsPanel_HomeEnd(t *testing.T) {
+	skills := makeSkills(20)
+	installed := map[string]string{}
+	modified := map[string]bool{}
+
+	p := NewSkillsPanel(skills, installed, modified)
+	p.SetSize(60, 10)
+
+	p.movePageDown()
+	p.movePageDown()
+
+	p.moveToTop()
+	if p.cursor != 0 {
+		t.Errorf("home: expected cursor=0, got %d", p.cursor)
+	}
+	if p.offset != 0 {
+		t.Errorf("home: expected offset=0, got %d", p.offset)
+	}
+
+	p.moveToBottom()
+	lastSkillIdx := -1
+	for i := len(p.flatItems) - 1; i >= 0; i-- {
+		if p.flatItems[i].Type == ItemTypeSkill {
+			lastSkillIdx = i
+			break
+		}
+	}
+	if p.cursor != lastSkillIdx {
+		t.Errorf("end: expected cursor=%d, got %d", lastSkillIdx, p.cursor)
+	}
+}
+
+func TestSkillsPanel_PageNav_KeyBindings(t *testing.T) {
+	skills := makeSkills(20)
+	installed := map[string]string{}
+	modified := map[string]bool{}
+
+	p := NewSkillsPanel(skills, installed, modified)
+	p.SetSize(60, 10)
+
+	p.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if p.cursor != 5 {
+		t.Errorf("pgdown key: expected cursor=5, got %d", p.cursor)
+	}
+
+	p.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	if p.cursor != 0 {
+		t.Errorf("pgup key: expected cursor=0, got %d", p.cursor)
+	}
+
+	p.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	p.Update(tea.KeyMsg{Type: tea.KeyHome})
+	if p.cursor != 0 {
+		t.Errorf("home key: expected cursor=0, got %d", p.cursor)
+	}
+
+	p.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	lastSkillIdx := -1
+	for i := len(p.flatItems) - 1; i >= 0; i-- {
+		if p.flatItems[i].Type == ItemTypeSkill {
+			lastSkillIdx = i
+			break
+		}
+	}
+	if p.cursor != lastSkillIdx {
+		t.Errorf("end key: expected cursor=%d, got %d", lastSkillIdx, p.cursor)
+	}
+}
+
+func TestSkillsPanel_PageNav_EmptyList(t *testing.T) {
+	skills := []registry.SkillEntry{}
+	installed := map[string]string{}
+	modified := map[string]bool{}
+
+	p := NewSkillsPanel(skills, installed, modified)
+
+	p.movePageUp()
+	p.movePageDown()
+	p.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	p.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	p.Update(tea.KeyMsg{Type: tea.KeyHome})
+	p.Update(tea.KeyMsg{Type: tea.KeyEnd})
+
+	if p.cursor != 0 {
+		t.Errorf("empty list: expected cursor=0, got %d", p.cursor)
 	}
 }

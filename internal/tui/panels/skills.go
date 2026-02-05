@@ -334,10 +334,14 @@ func (p *SkillsPanel) IsSearching() bool {
 
 // KeyMap for the skills panel
 type SkillsKeyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Top    key.Binding
-	Bottom key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Top      key.Binding
+	Bottom   key.Binding
+	PageUp   key.Binding
+	PageDown key.Binding
+	Home     key.Binding
+	End      key.Binding
 }
 
 func DefaultSkillsKeyMap() SkillsKeyMap {
@@ -353,6 +357,18 @@ func DefaultSkillsKeyMap() SkillsKeyMap {
 		),
 		Bottom: key.NewBinding(
 			key.WithKeys("G"),
+		),
+		PageUp: key.NewBinding(
+			key.WithKeys("pgup"),
+		),
+		PageDown: key.NewBinding(
+			key.WithKeys("pgdown"),
+		),
+		Home: key.NewBinding(
+			key.WithKeys("home"),
+		),
+		End: key.NewBinding(
+			key.WithKeys("end"),
 		),
 	}
 }
@@ -375,6 +391,14 @@ func (p *SkillsPanel) Update(msg tea.Msg) tea.Cmd {
 		case key.Matches(msg, km.Top):
 			p.moveToTop()
 		case key.Matches(msg, km.Bottom):
+			p.moveToBottom()
+		case key.Matches(msg, km.PageUp):
+			p.movePageUp()
+		case key.Matches(msg, km.PageDown):
+			p.movePageDown()
+		case key.Matches(msg, km.Home):
+			p.moveToTop()
+		case key.Matches(msg, km.End):
 			p.moveToBottom()
 		case msg.String() == "z":
 			p.toggleCurrentGroup()
@@ -455,6 +479,27 @@ func (p *SkillsPanel) moveToBottom() {
 			return
 		}
 	}
+}
+
+func (p *SkillsPanel) movePageUp() {
+	jump := p.height / 2
+	p.cursor -= jump
+	if p.cursor < 0 {
+		p.cursor = 0
+	}
+	p.adjustOffset()
+}
+
+func (p *SkillsPanel) movePageDown() {
+	if len(p.flatItems) == 0 {
+		return
+	}
+	jump := p.height / 2
+	p.cursor += jump
+	if p.cursor >= len(p.flatItems) {
+		p.cursor = len(p.flatItems) - 1
+	}
+	p.adjustOffset()
 }
 
 func (p *SkillsPanel) toggleCurrentGroup() {
