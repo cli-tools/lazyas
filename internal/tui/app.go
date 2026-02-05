@@ -266,7 +266,7 @@ func (a *App) initPanels() {
 	}
 
 	// Merge registry skills with local-only skills
-	skills := mergeSkills(a.registry.ListSkills(), localSkills)
+	skills := mergeSkills(a.registry.ListSkills(), localSkills, "")
 
 	// Create panels
 	a.skills = panels.NewSkillsPanel(skills, installed, modified)
@@ -282,7 +282,7 @@ func (a *App) initPanels() {
 	a.updateDetailPanel()
 }
 
-func mergeSkills(registrySkills []registry.SkillEntry, localSkills map[string]manifest.LocalSkill) []registry.SkillEntry {
+func mergeSkills(registrySkills []registry.SkillEntry, localSkills map[string]manifest.LocalSkill, query string) []registry.SkillEntry {
 	seen := make(map[string]bool)
 	result := make([]registry.SkillEntry, 0, len(registrySkills)+len(localSkills))
 
@@ -291,8 +291,12 @@ func mergeSkills(registrySkills []registry.SkillEntry, localSkills map[string]ma
 		seen[skill.Name] = true
 	}
 
+	lowerQuery := strings.ToLower(query)
 	for name, local := range localSkills {
 		if !seen[name] {
+			if query != "" && !strings.Contains(strings.ToLower(name), lowerQuery) {
+				continue
+			}
 			result = append(result, registry.SkillEntry{
 				Name:        name,
 				Description: local.Description,
@@ -936,9 +940,9 @@ func (a *App) filterSkills() {
 
 	var skills []registry.SkillEntry
 	if query == "" {
-		skills = mergeSkills(a.registry.ListSkills(), localSkills)
+		skills = mergeSkills(a.registry.ListSkills(), localSkills, "")
 	} else {
-		skills = mergeSkills(a.registry.SearchSkills(query), localSkills)
+		skills = mergeSkills(a.registry.SearchSkills(query), localSkills, query)
 	}
 	a.skills.SetSkills(skills)
 	a.updateDetailPanel()
