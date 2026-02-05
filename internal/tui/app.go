@@ -700,10 +700,11 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if a.layout.Focus() == layout.PanelLeft && a.skills != nil {
 		prevSelected := a.skills.Selected()
+		wasSearching := a.skills.IsSearching()
 		cmd = a.skills.Update(msg)
 
-		// If search query changed, filter skills
-		if key == "enter" && a.skills.GetQuery() != "" {
+		// If search was just submitted (Enter exits search mode), filter skills
+		if key == "enter" && wasSearching && !a.skills.IsSearching() {
 			a.filterSkills()
 		}
 
