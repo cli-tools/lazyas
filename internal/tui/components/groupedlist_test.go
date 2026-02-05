@@ -277,3 +277,161 @@ func TestGroupedSkillList_SetInstalled_RebuildsGroups(t *testing.T) {
 		t.Error("Should have Installed group after SetInstalled")
 	}
 }
+
+func TestGroupedSkillList_PageDown(t *testing.T) {
+	skills := tt.ManySkills(20)
+	installed := map[string]string{}
+
+	list := NewGroupedSkillList(skills, installed)
+	list.SetHeight(10) // half-page jump = 5
+
+	// Start at cursor 0
+	if list.cursor != 0 {
+		t.Fatalf("Expected cursor at 0, got %d", list.cursor)
+	}
+
+	// First PageDown: cursor should move by 5
+	list.MovePageDown()
+	if list.cursor != 5 {
+		t.Errorf("After first PageDown, expected cursor=5, got %d", list.cursor)
+	}
+
+	// Second PageDown: cursor should move by another 5
+	list.MovePageDown()
+	if list.cursor != 10 {
+		t.Errorf("After second PageDown, expected cursor=10, got %d", list.cursor)
+	}
+
+	// Repeated PageDown should clamp at last item
+	for i := 0; i < 20; i++ {
+		list.MovePageDown()
+	}
+	if list.cursor != len(list.flatItems)-1 {
+		t.Errorf("PageDown should clamp at last item, expected %d, got %d",
+			len(list.flatItems)-1, list.cursor)
+	}
+}
+
+func TestGroupedSkillList_PageUp(t *testing.T) {
+	skills := tt.ManySkills(20)
+	installed := map[string]string{}
+
+	list := NewGroupedSkillList(skills, installed)
+	list.SetHeight(10) // half-page jump = 5
+
+	// Start at bottom
+	list.MoveToBottom()
+	bottomCursor := list.cursor
+
+	// First PageUp: cursor should decrease by 5
+	list.MovePageUp()
+	expected := bottomCursor - 5
+	if list.cursor != expected {
+		t.Errorf("After first PageUp, expected cursor=%d, got %d", expected, list.cursor)
+	}
+
+	// Repeated PageUp should clamp at 0
+	for i := 0; i < 20; i++ {
+		list.MovePageUp()
+	}
+	if list.cursor != 0 {
+		t.Errorf("PageUp should clamp at 0, got %d", list.cursor)
+	}
+}
+
+func TestGroupedSkillList_HomeEnd(t *testing.T) {
+	skills := tt.ManySkills(20)
+	installed := map[string]string{}
+
+	list := NewGroupedSkillList(skills, installed)
+	list.SetHeight(10)
+
+	// Move somewhere in the middle
+	list.MovePageDown()
+	list.MovePageDown()
+
+	// Home should go to cursor=0, offset=0
+	list.MoveToTop()
+	if list.cursor != 0 {
+		t.Errorf("Home: expected cursor=0, got %d", list.cursor)
+	}
+	if list.offset != 0 {
+		t.Errorf("Home: expected offset=0, got %d", list.offset)
+	}
+
+	// End should land on last skill item
+	list.MoveToBottom()
+	selected := list.Selected()
+	if selected == nil {
+		t.Fatal("End: expected a skill to be selected")
+	}
+
+	// Verify it's the last skill item in flatItems
+	lastSkillIdx := -1
+	for i := len(list.flatItems) - 1; i >= 0; i-- {
+		if list.flatItems[i].Type == ItemTypeSkill {
+			lastSkillIdx = i
+			break
+		}
+	}
+	if list.cursor != lastSkillIdx {
+		t.Errorf("End: expected cursor=%d, got %d", lastSkillIdx, list.cursor)
+	}
+}
+
+func TestGroupedSkillList_PageNav_EmptyList(t *testing.T) {
+	skills := []registry.SkillEntry{}
+	installed := map[string]string{}
+
+	list := NewGroupedSkillList(skills, installed)
+
+	// Should not panic
+	list.MovePageUp()
+	list.MovePageDown()
+
+	if list.cursor != 0 {
+		t.Errorf("Empty list: expected cursor=0, got %d", list.cursor)
+	}
+}
+
+func TestGroupedSkillList_PageNav_KeyBindings(t *testing.T) {
+	skills := tt.ManySkills(20)
+	installed := map[string]string{}
+
+	list := NewGroupedSkillList(skills, installed)
+	list.SetHeight(10)
+
+	// pgdown key binding
+	list.Update(tt.KeyMsg("pgdown"))
+	if list.cursor != 5 {
+		t.Errorf("pgdown key: expected cursor=5, got %d", list.cursor)
+	}
+
+	// pgup key binding
+	list.Update(tt.KeyMsg("pgup"))
+	if list.cursor != 0 {
+		t.Errorf("pgup key: expected cursor=0, got %d", list.cursor)
+	}
+
+	// Move away from top for end test
+	list.Update(tt.KeyMsg("pgdown"))
+
+	// home key binding
+	list.Update(tt.KeyMsg("home"))
+	if list.cursor != 0 {
+		t.Errorf("home key: expected cursor=0, got %d", list.cursor)
+	}
+
+	// end key binding
+	list.Update(tt.KeyMsg("end"))
+	lastSkillIdx := -1
+	for i := len(list.flatItems) - 1; i >= 0; i-- {
+		if list.flatItems[i].Type == ItemTypeSkill {
+			lastSkillIdx = i
+			break
+		}
+	}
+	if list.cursor != lastSkillIdx {
+		t.Errorf("end key: expected cursor=%d, got %d", lastSkillIdx, list.cursor)
+	}
+}

@@ -136,24 +136,22 @@ func (r *Registry) scanForSkills(repoDir, repoURL string) ([]SkillEntry, error) 
 			skillMdPath := filepath.Join(skillDir, "SKILL.md")
 
 			if _, err := os.Stat(skillMdPath); err == nil {
-				// Found a skill
-				skill := SkillEntry{
-					Name: entry.Name(),
-					Source: SkillSource{
-						Repo: repoURL,
-					},
+				skills = append(skills, makeSkillEntry(entry.Name(), skillDir, repoDir, repoURL))
+			} else {
+				// Check one level deeper for category/skill-name layout
+				subEntries, err := os.ReadDir(skillDir)
+				if err != nil {
+					continue
 				}
-
-				// Determine path relative to repo root
-				relPath, _ := filepath.Rel(repoDir, skillDir)
-				skill.Source.Path = relPath
-
-				// Try to extract description from SKILL.md
-				if content, err := os.ReadFile(skillMdPath); err == nil {
-					skill.Description = skillmd.ExtractDescription(string(content))
+				for _, sub := range subEntries {
+					if !sub.IsDir() || sub.Name()[0] == '.' {
+						continue
+					}
+					subDir := filepath.Join(skillDir, sub.Name())
+					if _, err := os.Stat(filepath.Join(subDir, "SKILL.md")); err == nil {
+						skills = append(skills, makeSkillEntry(sub.Name(), subDir, repoDir, repoURL))
+					}
 				}
-
-				skills = append(skills, skill)
 			}
 		}
 	}
@@ -163,6 +161,21 @@ func (r *Registry) scanForSkills(repoDir, repoURL string) ([]SkillEntry, error) 
 	}
 
 	return skills, nil
+}
+
+func makeSkillEntry(name, skillDir, repoDir, repoURL string) SkillEntry {
+	skill := SkillEntry{
+		Name: name,
+		Source: SkillSource{
+			Repo: repoURL,
+		},
+	}
+	relPath, _ := filepath.Rel(repoDir, skillDir)
+	skill.Source.Path = relPath
+	if content, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md")); err == nil {
+		skill.Description = skillmd.ExtractDescription(string(content))
+	}
+	return skill
 }
 
 func joinErrors(errors []string) string {

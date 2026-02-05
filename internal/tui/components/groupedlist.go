@@ -260,6 +260,14 @@ func (l *GroupedSkillList) Update(msg tea.Msg) tea.Cmd {
 			l.MoveToTop()
 		case key.Matches(msg, km.Bottom):
 			l.MoveToBottom()
+		case key.Matches(msg, km.PageUp):
+			l.MovePageUp()
+		case key.Matches(msg, km.PageDown):
+			l.MovePageDown()
+		case key.Matches(msg, km.Home):
+			l.MoveToTop()
+		case key.Matches(msg, km.End):
+			l.MoveToBottom()
 		case msg.String() == "z" || msg.String() == "tab":
 			l.ToggleCurrentGroup()
 		}
@@ -291,6 +299,29 @@ func (l *GroupedSkillList) adjustOffset() {
 	if l.cursor >= l.offset+l.height {
 		l.offset = l.cursor - l.height + 1
 	}
+}
+
+// MovePageUp moves the cursor up by half a page
+func (l *GroupedSkillList) MovePageUp() {
+	jump := l.height / 2
+	l.cursor -= jump
+	if l.cursor < 0 {
+		l.cursor = 0
+	}
+	l.adjustOffset()
+}
+
+// MovePageDown moves the cursor down by half a page
+func (l *GroupedSkillList) MovePageDown() {
+	if len(l.flatItems) == 0 {
+		return
+	}
+	jump := l.height / 2
+	l.cursor += jump
+	if l.cursor >= len(l.flatItems) {
+		l.cursor = len(l.flatItems) - 1
+	}
+	l.adjustOffset()
 }
 
 // MoveToTop moves to the first skill
