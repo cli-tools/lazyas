@@ -643,8 +643,8 @@ func (a *App) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case "c":
-		if a.skills != nil && !a.skills.IsSearching() {
+	case "c", "esc":
+		if a.skills != nil && !a.skills.IsSearching() && a.skills.GetQuery() != "" {
 			a.skills.ClearSearch()
 			a.filterSkills()
 			return a, nil
@@ -1863,19 +1863,30 @@ func (a *App) renderStatusBar() string {
 			"esc", "close",
 		}
 	} else {
-		pairs = []string{
-			"j/k", "navigate",
-			"h/l", "panels",
-			"z", "fold",
-			"i", "install",
-			"r", "remove",
-			"U", "update",
-			"A", "add repo",
-			"S", "sync",
-			"b", "backends",
-			"K", "starter kit",
-			"/", "search",
-			"q", "quit",
+		if a.skills != nil && a.skills.GetQuery() != "" {
+			pairs = []string{
+				"j/k", "navigate",
+				"h/l", "panels",
+				"i", "install",
+				"r", "remove",
+				"esc", "clear search",
+				"q", "quit",
+			}
+		} else {
+			pairs = []string{
+				"j/k", "navigate",
+				"h/l", "panels",
+				"z", "fold",
+				"i", "install",
+				"r", "remove",
+				"U", "update",
+				"A", "add repo",
+				"S", "sync",
+				"b", "backends",
+				"K", "starter kit",
+				"/", "search",
+				"q", "quit",
+			}
 		}
 	}
 
