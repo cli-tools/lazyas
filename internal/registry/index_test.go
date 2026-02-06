@@ -86,6 +86,60 @@ func TestScanForSkills_SkipsHiddenDirs(t *testing.T) {
 	}
 }
 
+func TestScanForSkills_DeduplicatesAcrossSearchDirs(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Skill inside skills/ subdir: the root scan finds "skills/" (no SKILL.md),
+	// goes one level deeper and discovers "my-skill". The skills/ search dir
+	// also finds "my-skill" directly. Without dedup this produces two entries.
+	createSkill(t, tmp, "skills", "my-skill")
+
+	r := &Registry{}
+	skills, err := r.scanForSkills(tmp, "https://example.com/repo.git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d: %v", len(skills), skillNames(skills))
+	}
+	if skills[0].Name != "my-skill" {
+		t.Errorf("expected my-skill, got %s", skills[0].Name)
+	}
+	if skills[0].Source.Path != filepath.Join("skills", "my-skill") {
+		t.Errorf("path = %q, want %q", skills[0].Source.Path, filepath.Join("skills", "my-skill"))
+	}
+}
+
+func TestScanForSkills_DeduplicatesMultipleOverlaps(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Two skills in skills/ — both would be found by root (nested) and skills/ (direct)
+	createSkill(t, tmp, "skills", "alpha")
+	createSkill(t, tmp, "skills", "beta")
+	// A root-level skill that has no overlap
+	createSkill(t, tmp, "root-skill")
+
+	r := &Registry{}
+	skills, err := r.scanForSkills(tmp, "https://example.com/repo.git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	names := skillNames(skills)
+	sort.Strings(names)
+
+	if len(names) != 3 {
+		t.Fatalf("expected 3 skills, got %d: %v", len(names), names)
+	}
+	want := []string{"alpha", "beta", "root-skill"}
+	for i, w := range want {
+		if names[i] != w {
+			t.Errorf("names[%d] = %q, want %q", i, names[i], w)
+		}
+	}
+}
+
 func TestScanForSkills_EmptyRepo(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -94,4 +148,12 @@ func TestScanForSkills_EmptyRepo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty repo, got nil")
 	}
+}
+
+func skillNames(skills []SkillEntry) []string {
+	names := make([]string, len(skills))
+	for i, s := range skills {
+		names[i] = s.Name
+	}
+	return names
 }
