@@ -84,7 +84,23 @@ func RepoInstall(opts RepoInstallOptions) (*CloneResult, error) {
 
 	// Verify the path materialized
 	if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("skill path %s not found in repository after checkout", opts.Path)
+		// Existing sparse clones can be stale (new skill path added upstream).
+		// Try a fast-forward refresh once and re-apply sparse checkout.
+		if sparse && !isNew {
+			if err := refreshExistingClone(opts.RepoDir); err != nil {
+				return nil, fmt.Errorf("skill path %s not found in repository after checkout (failed to refresh existing clone: %w)", opts.Path, err)
+			}
+			if err := runGit(opts.RepoDir, "sparse-checkout", "add", opts.Path); err != nil {
+				return nil, fmt.Errorf("sparse-checkout add failed after refresh: %w", err)
+			}
+			if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+				return nil, fmt.Errorf("skill path %s not found in repository after checkout", opts.Path)
+			}
+		} else {
+			return nil, fmt.Errorf("skill path %s not found in repository after checkout", opts.Path)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to validate skill path %s: %w", opts.Path, err)
 	}
 
 	// Step 4: Validate SKILL.md exists
@@ -118,6 +134,30 @@ func RepoInstall(opts RepoInstallOptions) (*CloneResult, error) {
 		Commit: commit,
 		Path:   skillPath,
 	}, nil
+}
+
+// refreshExistingClone fast-forwards an existing clone to origin without
+// destructive resets. This is used when sparse checkout paths were added
+// upstream after the local clone was first created.
+func refreshExistingClone(repoDir string) error {
+	if err := runGit(repoDir, "fetch", "--depth", "1", "origin"); err != nil {
+		return fmt.Errorf("git fetch failed: %w", err)
+	}
+	if err := runGit(repoDir, "merge", "--ff-only", "FETCH_HEAD"); err != nil {
+		// If histories diverged/rebased, fall back to a hard reset only when
+		// there are no local uncommitted changes to lose.
+		modified, modErr := IsModified(repoDir)
+		if modErr != nil {
+			return fmt.Errorf("git merge --ff-only failed (%v), and failed to check local modifications: %w", err, modErr)
+		}
+		if modified {
+			return fmt.Errorf("git merge --ff-only failed (%v), and repository has local modifications", err)
+		}
+		if resetErr := runGit(repoDir, "reset", "--hard", "FETCH_HEAD"); resetErr != nil {
+			return fmt.Errorf("git merge --ff-only failed (%v), and git reset --hard failed: %w", err, resetErr)
+		}
+	}
+	return nil
 }
 
 // ensureRepoClone clones a repository. If sparse is true, uses --sparse for
