@@ -67,4 +67,3 @@ func TestApp_PageKeys_RoutedToSkillsPanel(t *testing.T) {
 		t.Fatalf("expected Home routed through App.Update to return to top header, got %q", got.Name)
 	}
 }
-
