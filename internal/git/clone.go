@@ -103,6 +103,36 @@ func GetDiff(path string) (string, error) {
 	return string(out), nil
 }
 
+// RemoteHEAD returns the HEAD commit of the remote origin without modifying
+// local state. Requires a single network round-trip (git ls-remote).
+func RemoteHEAD(repoDir string) (string, error) {
+	cmd := exec.Command("git", "ls-remote", "origin", "HEAD")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote failed: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("git ls-remote returned empty output")
+	}
+	return fields[0], nil
+}
+
+// IsRepoOutdated checks whether the local HEAD differs from the remote HEAD.
+// Returns false (not outdated) on any error so callers can silently ignore failures.
+func IsRepoOutdated(repoDir string) (bool, error) {
+	localHead, err := getHeadCommit(repoDir)
+	if err != nil {
+		return false, err
+	}
+	remoteHead, err := RemoteHEAD(repoDir)
+	if err != nil {
+		return false, err
+	}
+	return localHead != remoteHead, nil
+}
+
 // Update pulls the latest changes for a skill
 // Returns error if there are local modifications (to prevent losing changes)
 func Update(skillPath, tag string) (*CloneResult, error) {

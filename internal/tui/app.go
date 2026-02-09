@@ -94,6 +94,9 @@ type App struct {
 	linkedBackends int
 	totalBackends  int
 
+	// Staleness
+	outdated map[string]bool
+
 	// State
 	message string
 	err     error
@@ -196,7 +199,7 @@ func (a *App) Init() tea.Cmd {
 
 // Messages
 type (
-	indexFetchedMsg  struct{}
+	indexFetchedMsg  struct{ outdated map[string]bool }
 	indexErrorMsg    struct{ err error }
 	installDoneMsg   struct{ skill string }
 	installErrMsg    struct{ err error }
@@ -245,7 +248,48 @@ func (a *App) doFetchIndex(force bool) tea.Msg {
 		return indexErrorMsg{err}
 	}
 
-	return indexFetchedMsg{}
+	outdated := a.checkStaleness()
+	return indexFetchedMsg{outdated: outdated}
+}
+
+// checkStaleness groups installed skills by source repo and checks each unique
+// repo for remote updates. Returns a map of outdated skill names.
+func (a *App) checkStaleness() map[string]bool {
+	installed := a.manifest.ListInstalled()
+	if len(installed) == 0 {
+		return nil
+	}
+
+	// Group skill names by repo dir
+	repoSkills := make(map[string][]string) // repoDir -> []skillName
+	for name, info := range installed {
+		if info.SourceRepo == "" {
+			continue
+		}
+		repoDir := filepath.Join(a.cfg.ReposDir, git.RepoDirName(info.SourceRepo))
+		repoSkills[repoDir] = append(repoSkills[repoDir], name)
+	}
+
+	result := make(map[string]bool)
+	for repoDir, names := range repoSkills {
+		if _, err := os.Stat(repoDir); err != nil {
+			continue // repo dir missing, skip
+		}
+		outdated, err := git.IsRepoOutdated(repoDir)
+		if err != nil {
+			continue // silently ignore errors
+		}
+		if outdated {
+			for _, name := range names {
+				result[name] = true
+			}
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func (a *App) initPanels() {
@@ -287,6 +331,7 @@ func (a *App) initPanels() {
 		a.skills.SetCollapseMap(collapseMap)
 	}
 	a.skills.SetLocalOnly(localOnly)
+	a.skills.SetOutdated(a.outdated)
 	a.skills.SetFocused(true)
 	a.skills.SetSize(a.layout.LeftContentWidth(), a.layout.ContentHeight())
 
@@ -363,6 +408,7 @@ func (a *App) updateDetailPanel() {
 	}
 
 	a.detail.SetSkill(skill, installed, local, a.cfg.SkillsDir)
+	a.detail.SetOutdated(a.outdated[skill.Name])
 }
 
 // checkBackendStatus updates the backend status for the header display
@@ -420,6 +466,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case indexFetchedMsg:
+		a.outdated = msg.outdated
 		a.initPanels()
 		a.checkBackendStatus()
 		// Replace stale "refreshing..." message with completion summary
@@ -534,6 +581,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateDoneMsg:
 		a.updateResult = &msg
+		// Clear outdated status for skills that were updated or are up-to-date
+		if a.outdated != nil {
+			for _, r := range msg.results {
+				if r.status == "updated" || r.status == "up-to-date" {
+					delete(a.outdated, r.name)
+				}
+			}
+			if len(a.outdated) == 0 {
+				a.outdated = nil
+			}
+		}
 		a.refreshPanels()
 		a.mode = ModeUpdateResult
 		return a, nil
@@ -1046,6 +1104,7 @@ func (a *App) refreshPanels() {
 	a.skills.SetInstalled(installed)
 	a.skills.SetModified(modified)
 	a.skills.SetLocalOnly(localOnly)
+	a.skills.SetOutdated(a.outdated)
 	a.updateDetailPanel()
 }
 

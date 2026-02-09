@@ -46,6 +46,7 @@ type SkillsPanel struct {
 	installed   map[string]string
 	modified    map[string]bool
 	localOnly   map[string]bool // On disk but not tracked in manifest
+	outdated    map[string]bool
 	cursor      int
 	height      int
 	width       int
@@ -68,6 +69,7 @@ type SkillsPanelStyles struct {
 	StatusInstalled      lipgloss.Style
 	StatusLocal          lipgloss.Style
 	StatusAvailable      lipgloss.Style
+	StatusOutdated       lipgloss.Style
 	StatusModified       lipgloss.Style
 	SelectedItem         lipgloss.Style
 	NormalItem           lipgloss.Style
@@ -92,6 +94,9 @@ func DefaultSkillsPanelStyles() SkillsPanelStyles {
 		StatusAvailable: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#6B7280")).
 			SetString("○"),
+		StatusOutdated: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#818CF8")).
+			SetString("↑"),
 		StatusModified: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F59E0B")).
 			SetString("◉"),
@@ -301,6 +306,11 @@ func (p *SkillsPanel) SetModified(modified map[string]bool) {
 // SetLocalOnly updates the local-only map (installed on disk but not tracked in manifest)
 func (p *SkillsPanel) SetLocalOnly(localOnly map[string]bool) {
 	p.localOnly = localOnly
+}
+
+// SetOutdated updates the outdated map (skills with remote updates available)
+func (p *SkillsPanel) SetOutdated(outdated map[string]bool) {
+	p.outdated = outdated
 }
 
 // Selected returns the currently selected skill
@@ -627,6 +637,8 @@ func (p *SkillsPanel) renderSkill(skill *registry.SkillEntry, selected bool) str
 		if isInst {
 			if p.modified[skill.Name] {
 				statusChar = "◉"
+			} else if p.outdated[skill.Name] {
+				statusChar = "↑"
 			} else if p.localOnly[skill.Name] {
 				statusChar = "●"
 			} else {
@@ -647,6 +659,8 @@ func (p *SkillsPanel) renderSkill(skill *registry.SkillEntry, selected bool) str
 	if isInst {
 		if p.modified[skill.Name] {
 			status = p.styles.StatusModified.String()
+		} else if p.outdated[skill.Name] {
+			status = p.styles.StatusOutdated.String()
 		} else if p.localOnly[skill.Name] {
 			status = p.styles.StatusLocal.String()
 		} else {

@@ -33,6 +33,7 @@ type DetailPanel struct {
 	viewport     viewport.Model
 	infoViewport viewport.Model
 	skillMD      string
+	isOutdated   bool
 
 	// Styles
 	styles DetailPanelStyles
@@ -50,6 +51,7 @@ type DetailPanelStyles struct {
 	Tag           lipgloss.Style
 	Badge         lipgloss.Style
 	BadgeModified lipgloss.Style
+	BadgeOutdated lipgloss.Style
 }
 
 // DefaultDetailPanelStyles returns the default styles
@@ -87,6 +89,9 @@ func DefaultDetailPanelStyles() DetailPanelStyles {
 			Bold(true),
 		BadgeModified: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F59E0B")).
+			Bold(true),
+		BadgeOutdated: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#818CF8")).
 			Bold(true),
 	}
 }
@@ -127,6 +132,14 @@ func (p *DetailPanel) SetSkill(skill *registry.SkillEntry, installed *manifest.I
 	}
 	if p.tab == TabSkillMD {
 		p.viewport.SetContent(p.skillMD)
+	}
+}
+
+// SetOutdated sets whether the current skill has an update available
+func (p *DetailPanel) SetOutdated(outdated bool) {
+	p.isOutdated = outdated
+	if p.skill != nil {
+		p.infoViewport.SetContent(p.renderInfo())
 	}
 }
 
@@ -255,6 +268,8 @@ func (p *DetailPanel) renderInfo() string {
 		b.WriteString("  ")
 		if p.localInfo.IsModified {
 			b.WriteString(p.styles.BadgeModified.Render("● MODIFIED"))
+		} else if p.isOutdated {
+			b.WriteString(p.styles.BadgeOutdated.Render("↑ UPDATE AVAILABLE"))
 		} else {
 			b.WriteString(p.styles.Badge.Render("● INSTALLED"))
 		}
@@ -268,6 +283,13 @@ func (p *DetailPanel) renderInfo() string {
 		b.WriteString(p.styles.Muted.Render("○ Not installed"))
 	}
 	b.WriteString("\n")
+
+	// Show hint when both modified AND outdated
+	if p.localInfo != nil && p.localInfo.IsModified && p.isOutdated {
+		b.WriteString(p.styles.BadgeOutdated.Render("  ↑ Update available"))
+		b.WriteString(p.styles.Muted.Render(" (commit or discard local changes first)"))
+		b.WriteString("\n")
+	}
 
 	if isUntracked {
 		// Untracked skill: show local path, not registry source info

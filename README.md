@@ -248,7 +248,7 @@ lazyas  Lazy Agent Skills      claude ✓ codex ✓ gemini ✓ ...
 ```
 
 - Purple borders indicate the active panel
-- `●` = installed, `○` = available, `◉` = modified
+- `●` = installed, `○` = available, `◉` = modified, `↑` = update available
 - Collapsible groups with `▼`/`▶` indicators
 - Backend status shown in header
 
