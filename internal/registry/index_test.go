@@ -150,6 +150,26 @@ func TestScanForSkills_EmptyRepo(t *testing.T) {
 	}
 }
 
+func TestScanForSkills_RootSkillLayout(t *testing.T) {
+	tmp := t.TempDir()
+	createSkill(t, tmp) // root SKILL.md
+
+	r := &Registry{}
+	skills, err := r.scanForSkills(tmp, "https://github.com/blader/humanizer.git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d: %v", len(skills), skillNames(skills))
+	}
+	if skills[0].Name != "humanizer" {
+		t.Errorf("name = %q, want %q", skills[0].Name, "humanizer")
+	}
+	if skills[0].Source.Path != "" {
+		t.Errorf("path = %q, want empty path for root skill", skills[0].Source.Path)
+	}
+}
+
 func skillNames(skills []SkillEntry) []string {
 	names := make([]string, len(skills))
 	for i, s := range skills {

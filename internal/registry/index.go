@@ -2,9 +2,11 @@ package registry
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 	"lazyas/internal/config"
@@ -110,6 +112,16 @@ func (r *Registry) scanForSkills(repoDir, repoURL string) ([]SkillEntry, error) 
 	var skills []SkillEntry
 	seen := map[string]bool{}
 
+	// Support single-skill repos where SKILL.md lives at the repo root.
+	if _, err := os.Stat(filepath.Join(repoDir, "SKILL.md")); err == nil {
+		rootName := inferRootSkillName(repoURL, repoDir)
+		rootEntry := makeSkillEntry(rootName, repoDir, repoDir, repoURL)
+		if !seen[rootEntry.Source.Path] {
+			seen[rootEntry.Source.Path] = true
+			skills = append(skills, rootEntry)
+		}
+	}
+
 	// Common locations for skills
 	searchDirs := []string{
 		repoDir,                          // root
@@ -180,11 +192,38 @@ func makeSkillEntry(name, skillDir, repoDir, repoURL string) SkillEntry {
 		},
 	}
 	relPath, _ := filepath.Rel(repoDir, skillDir)
+	if relPath == "." {
+		relPath = ""
+	}
 	skill.Source.Path = relPath
 	if content, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md")); err == nil {
 		skill.Description = skillmd.ExtractDescription(string(content))
 	}
 	return skill
+}
+
+func inferRootSkillName(repoURL, repoDir string) string {
+	if parsed, err := url.Parse(repoURL); err == nil && parsed.Host != "" {
+		p := strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/")
+		if p != "" {
+			return filepath.Base(p)
+		}
+	}
+
+	// Handle SCP-style git URLs: git@github.com:owner/repo.git
+	if idx := strings.LastIndex(repoURL, ":"); idx != -1 {
+		p := strings.Trim(strings.TrimSuffix(repoURL[idx+1:], ".git"), "/")
+		if p != "" {
+			return filepath.Base(p)
+		}
+	}
+
+	if p := strings.Trim(strings.TrimSuffix(repoURL, ".git"), "/"); p != "" {
+		if base := filepath.Base(p); base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return filepath.Base(repoDir)
 }
 
 func joinErrors(errors []string) string {
